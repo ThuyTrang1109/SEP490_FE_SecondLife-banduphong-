@@ -94,17 +94,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   }, []);
 
   // Buyer Form Information
-  const [buyerName, setBuyerName] = useState(currentUser?.name || 'Hoàng Quốc Khang');
-  const [buyerPhone, setBuyerPhone] = useState(currentUser?.phone || '0912 345 678');
-  const [buyerEmail, setBuyerEmail] = useState(currentUser?.email || 'khachhang@secondlife.vn');
-  const [city, setCity] = useState('Đà Nẵng');
-  const [district, setDistrict] = useState('Hải Châu');
-  const [ward, setWard] = useState('Phường Phước Ninh');
-  const [streetAddress, setStreetAddress] = useState(
-    currentUser?.address || '92 Phan Châu Trinh'
-  );
+  const [buyerName, setBuyerName] = useState(currentUser?.name || '');
+  const [buyerPhone, setBuyerPhone] = useState(currentUser?.phone || '');
+  const [buyerEmail, setBuyerEmail] = useState(currentUser?.email || '');
+  const [city, setCity] = useState('');
+  const [district, setDistrict] = useState('');
+  const [ward, setWard] = useState('');
+  const [streetAddress, setStreetAddress] = useState(currentUser?.address || '');
   const [addressType, setAddressType] = useState<'home' | 'office'>('home');
-  const [deliveryNote, setDeliveryNote] = useState('Gọi trước khi giao 15 phút, kiểm tra tem niêm phong Hub.');
+  const [deliveryNote, setDeliveryNote] = useState('');
 
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
 
@@ -122,6 +120,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     }
     if (!buyerPhone.trim() || buyerPhone.replace(/\D/g, '').length < 9) {
       errors.buyerPhone = lang === 'vi' ? 'Số điện thoại không hợp lệ (tối thiểu 9 số)' : 'Valid phone required';
+    }
+    if (!city) {
+      errors.city = lang === 'vi' ? 'Vui lòng chọn Tỉnh/Thành phố' : 'City is required';
+    }
+    if (!district.trim()) {
+      errors.district = lang === 'vi' ? 'Vui lòng nhập Quận/Huyện' : 'District is required';
+    }
+    if (!ward.trim()) {
+      errors.ward = lang === 'vi' ? 'Vui lòng nhập Phường/Xã' : 'Ward is required';
     }
     if (!streetAddress.trim()) {
       errors.streetAddress = lang === 'vi' ? 'Vui lòng nhập số nhà, tên đường' : 'Street address is required';
@@ -257,9 +264,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md animate-fadeIn overflow-y-auto">
-      <div className="bg-[#FFFFFF] rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-gray-200 flex flex-col my-auto text-[#24263e]">
+      <div className="bg-[#FFFFFF] rounded-3xl max-w-2xl w-full max-h-[92vh] overflow-hidden shadow-2xl border border-gray-200 flex flex-col my-auto text-[#24263e]">
         {/* Header */}
-        <div className="p-5 border-b border-[#24263e]/15 flex items-center justify-between bg-gradient-to-r from-[#fce5da] to-[#faf8f5] text-[#24263e]">
+        <div className="p-5 border-b border-[#24263e]/15 flex items-center justify-between bg-gradient-to-r from-[#fce5da] to-[#faf8f5] text-[#24263e] shrink-0 rounded-t-3xl">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-2xl bg-[#24263e] text-white flex items-center justify-center shadow-md">
               <Lock className="w-5 h-5 text-white" />
@@ -283,7 +290,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         {/* Body Form */}
-        <form onSubmit={handleConfirmOrder} className="p-5 sm:p-6 space-y-6 text-xs text-[#24263e]">
+        <form onSubmit={handleConfirmOrder} className="p-5 sm:p-6 space-y-6 text-xs text-[#24263e] flex-1 overflow-y-auto subtle-scrollbar">
           {/* Item Snapshot */}
           <div className="flex items-center gap-3.5 bg-[#faf8f5] p-3.5 rounded-2xl border border-gray-200 shadow-2xs">
             <img
@@ -421,15 +428,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </label>
                 <select
                   value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#faf8f5] border border-slate-200 rounded-xl text-xs font-semibold text-[#24263e] focus:outline-none focus:border-[#c34c36] cursor-pointer"
+                  onChange={(e) => {
+                    setCity(e.target.value);
+                    if (formErrors.city) setFormErrors({ ...formErrors, city: '' });
+                  }}
+                  className={`w-full px-3 py-2 bg-[#faf8f5] border rounded-xl text-xs font-semibold text-[#24263e] focus:outline-none transition cursor-pointer ${
+                    formErrors.city ? 'border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-[#c34c36]'
+                  }`}
                 >
+                  <option value="" disabled hidden>{lang === 'vi' ? 'Chọn Tỉnh / Thành phố' : 'Select City'}</option>
                   {VIETNAM_CITIES.map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>
                   ))}
                 </select>
+                {formErrors.city && (
+                  <span className="text-[10px] text-rose-500 font-semibold mt-0.5 block">{formErrors.city}</span>
+                )}
               </div>
 
               <div>
@@ -439,10 +455,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <input
                   type="text"
                   value={district}
-                  onChange={(e) => setDistrict(e.target.value)}
+                  onChange={(e) => {
+                    setDistrict(e.target.value);
+                    if (formErrors.district) setFormErrors({ ...formErrors, district: '' });
+                  }}
                   placeholder="Quận/Huyện"
-                  className="w-full px-3 py-2 bg-[#faf8f5] border border-slate-200 rounded-xl text-xs font-semibold text-[#24263e] focus:outline-none focus:border-[#c34c36]"
+                  className={`w-full px-3 py-2 bg-[#faf8f5] border rounded-xl text-xs font-semibold text-[#24263e] focus:outline-none transition ${
+                    formErrors.district ? 'border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-[#c34c36]'
+                  }`}
                 />
+                {formErrors.district && (
+                  <span className="text-[10px] text-rose-500 font-semibold mt-0.5 block">{formErrors.district}</span>
+                )}
               </div>
 
               <div>
@@ -452,10 +476,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <input
                   type="text"
                   value={ward}
-                  onChange={(e) => setWard(e.target.value)}
+                  onChange={(e) => {
+                    setWard(e.target.value);
+                    if (formErrors.ward) setFormErrors({ ...formErrors, ward: '' });
+                  }}
                   placeholder="Phường/Xã"
-                  className="w-full px-3 py-2 bg-[#faf8f5] border border-slate-200 rounded-xl text-xs font-semibold text-[#24263e] focus:outline-none focus:border-[#c34c36]"
+                  className={`w-full px-3 py-2 bg-[#faf8f5] border rounded-xl text-xs font-semibold text-[#24263e] focus:outline-none transition ${
+                    formErrors.ward ? 'border-rose-500 bg-rose-50/20' : 'border-slate-200 focus:border-[#c34c36]'
+                  }`}
                 />
+                {formErrors.ward && (
+                  <span className="text-[10px] text-rose-500 font-semibold mt-0.5 block">{formErrors.ward}</span>
+                )}
               </div>
             </div>
 

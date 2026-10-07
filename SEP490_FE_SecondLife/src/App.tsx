@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UserRole, Language, Listing, EscrowOrder, DisputeCase, UserProfile, UserCredit } from './types';
+import { UserRole, Language, Listing, EscrowOrder, DisputeCase, UserProfile, UserCredit, ItemCategory, ConditionGrade } from './types';
 import { formatVND } from './utils/translations';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
@@ -11,6 +11,7 @@ import { EscrowOrdersView } from './pages/EscrowOrdersView';
 import { InspectorPortalView } from './pages/InspectorPortalView';
 import { StaffWorkspaceView } from './pages/StaffWorkspaceView';
 import { AdminDashboardView } from './pages/AdminDashboardView';
+import { InboxView } from './pages/InboxView';
 import { ChatModal } from './components/modals/ChatModal';
 import { CheckoutModal } from './components/modals/CheckoutModal';
 import { HomePageView } from './pages/HomePageView';
@@ -28,7 +29,16 @@ import { authService, userService, topupService, walletService, orderService, ne
 export default function App() {
   // Global State - Default to 'marketplace' so visitors enter directly into the marketplace
   const [lang, setLang] = useState<Language>('vi');
-  const [activeTab, setActiveTab] = useState<string>('marketplace');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const token = getAccessToken();
+    const stored = getStoredUser();
+    if (token && stored && stored.role) {
+      const r = String(stored.role).toLowerCase();
+      if (r === 'admin') return 'admin-dashboard';
+      if (r === 'inspector') return 'inspection-hub';
+    }
+    return 'home';
+  });
 
   React.useEffect(() => {
     document.body.classList.remove('dark');
@@ -83,6 +93,11 @@ export default function App() {
           setCurrentUser(syncedUser);
           setCurrentRole(syncedUser.role);
           setStoredUser(syncedUser);
+          if (syncedUser.role === 'admin') {
+            setActiveTab('admin-dashboard');
+          } else if (syncedUser.role === 'inspector') {
+            setActiveTab('inspection-hub');
+          }
         } else {
           clearAuthTokens();
           setCurrentUser(null);
@@ -107,6 +122,8 @@ export default function App() {
       clearAuthTokens();
       setCurrentUser(null);
       setCurrentRole('buyer');
+      setActiveTab('marketplace');
+      window.location.reload();
     };
     window.addEventListener('unauthorized_session', handleUnauthorized);
     return () => window.removeEventListener('unauthorized_session', handleUnauthorized);
@@ -215,6 +232,16 @@ export default function App() {
   };
 
   const handleTabChange = (tab: string) => {
+    if (currentUser?.role === 'admin' && tab !== 'admin-dashboard') {
+      showToast(lang === 'vi' ? 'Tài khoản Quản trị viên chỉ truy cập trang Quản Trị Hệ Thống.' : 'Admin account only accesses Admin Portal.');
+      return;
+    }
+
+    if (currentUser?.role === 'inspector' && tab !== 'inspection-hub') {
+      showToast(lang === 'vi' ? 'Tài khoản Kỹ sư Hub chỉ truy cập Trung Tâm Kiểm Định.' : 'Inspector account only accesses Inspection Hub.');
+      return;
+    }
+
     if (protectedTabs.includes(tab) && !currentUser) {
       setPendingTab(tab);
       let promptMsg = lang === 'vi'
@@ -242,7 +269,13 @@ export default function App() {
     }
 
     if (tab === 'create-listing') {
-      if (currentUser && currentUser.role !== 'seller') {
+      if (currentUser && ['admin', 'inspector'].includes(currentUser.role)) {
+        showToast(lang === 'vi'
+          ? 'Tài khoản Quản trị viên và Kỹ sư Hub không được đăng ký làm Người Bán.'
+          : 'Admin and Inspector roles cannot register as sellers.');
+        return;
+      }
+      if (currentUser && currentUser.role !== 'seller' && currentUser.role !== 'staff') {
         setIsSellerRegistrationModalOpen(true);
         return;
       }
@@ -251,10 +284,14 @@ export default function App() {
     setActiveTab(tab);
   };
 
-  // Guard activeTab if logged out
+  // Guard activeTab if logged out or if internal roles (admin / inspector)
   React.useEffect(() => {
     if (!currentUser && protectedTabs.includes(activeTab)) {
       setActiveTab('marketplace');
+    } else if (currentUser?.role === 'admin' && activeTab !== 'admin-dashboard') {
+      setActiveTab('admin-dashboard');
+    } else if (currentUser?.role === 'inspector' && activeTab !== 'inspection-hub') {
+      setActiveTab('inspection-hub');
     }
   }, [currentUser, activeTab]);
 
@@ -277,7 +314,7 @@ export default function App() {
     if (newRole === 'inspector') {
       handleTabChange('inspection-hub');
     } else if (newRole === 'staff') {
-      handleTabChange('staff-workspace');
+      handleTabChange('home');
     } else if (newRole === 'admin') {
       handleTabChange('admin-dashboard');
     } else if (newRole === 'seller') {
@@ -294,44 +331,130 @@ export default function App() {
   };
 
   const mapBackendPostToListing = React.useCallback((post: any): Listing => {
-    const rawImages: string[] = Array.isArray(post.imageUrls) && post.imageUrls.length > 0
-      ? post.imageUrls
+    const rawTitle = post.title || 'Thiết bị gia dụng SecondLife';
+    const cleanTitle = rawTitle.replace(/^Tiêu đề:\s*/i, '').trim();
+    const titleLower = cleanTitle.toLowerCase();
+    const descLower = (post.description || '').toLowerCase();
+
+    // 1. Nhận diện danh mục sản phẩm thông minh
+    let detectedCategory: ItemCategory = 'Tủ lạnh & Tủ đông';
+    if (titleLower.includes('tủ lạnh') || titleLower.includes('tủ đông') || titleLower.includes('refrigerator') || titleLower.includes('fridge')) {
+      detectedCategory = 'Tủ lạnh & Tủ đông';
+    } else if (titleLower.includes('máy giặt') || titleLower.includes('máy sấy') || titleLower.includes('giặt sấy') || titleLower.includes('washing') || titleLower.includes('dryer')) {
+      detectedCategory = 'Máy giặt & Máy sấy';
+    } else if (titleLower.includes('lò vi sóng') || titleLower.includes('microwave') || titleLower.includes('lò nướng') || titleLower.includes('oven')) {
+      detectedCategory = 'Lò vi sóng & Lò nướng';
+    } else if (titleLower.includes('điều hòa') || titleLower.includes('máy lạnh') || titleLower.includes('máy lọc') || titleLower.includes('air conditioner')) {
+      detectedCategory = 'Điều hòa & Máy lọc';
+    } else if (titleLower.includes('robot') || titleLower.includes('hút bụi') || titleLower.includes('vacuum')) {
+      detectedCategory = 'Robot & Máy hút bụi';
+    } else if (titleLower.includes('nồi cơm') || titleLower.includes('bếp từ') || titleLower.includes('bếp hồng ngoại') || titleLower.includes('cooker') || titleLower.includes('stove')) {
+      detectedCategory = 'Nồi cơm & Bếp từ';
+    } else if (post.category && typeof post.category === 'string' && !post.category.includes('-')) {
+      detectedCategory = post.category as ItemCategory;
+    }
+
+    // 2. Nhận diện thương hiệu
+    let detectedBrand = post.brand || '';
+    if (!detectedBrand) {
+      const knownBrands = ['Panasonic', 'Kaff', 'LG', 'Samsung', 'Hitachi', 'Daikin', 'Electrolux', 'Toshiba', 'Sharp', 'Casper', 'Ecovacs', 'Cuckoo', 'Philips', 'Bosch', 'Xiaomi'];
+      for (const b of knownBrands) {
+        if (titleLower.includes(b.toLowerCase())) {
+          detectedBrand = b;
+          break;
+        }
+      }
+      if (!detectedBrand) detectedBrand = 'SecondLife';
+    }
+
+    // 3. Nhận diện tình trạng máy (Condition Grade)
+    let detectedGrade: ConditionGrade = 'Like New';
+    const conditionStr = (post.itemCondition || descLower).toLowerCase();
+    if (conditionStr.includes('99%') || conditionStr.includes('như mới') || conditionStr.includes('like new') || conditionStr.includes('brand new')) {
+      detectedGrade = 'Like New';
+    } else if (conditionStr.includes('95%') || conditionStr.includes('tốt') || conditionStr.includes('good')) {
+      detectedGrade = 'Good';
+    } else if (conditionStr.includes('90%') || conditionStr.includes('khá') || conditionStr.includes('fair')) {
+      detectedGrade = 'Fair';
+    }
+
+    // 4. Ảnh gia dụng chất lượng cao thay vì ảnh cơm/đồ ăn
+    const categoryFallbacks: Record<ItemCategory, string[]> = {
+      'Tủ lạnh & Tủ đông': [
+        'https://images.unsplash.com/photo-1584568694244-14fbdf83bd30?auto=format&fit=crop&q=80&w=800',
+        'https://images.unsplash.com/photo-1571175443880-49e1d25b2bc5?auto=format&fit=crop&q=80&w=800',
+      ],
+      'Máy giặt & Máy sấy': [
+        'https://images.unsplash.com/photo-1626806787461-102c1bfaaea1?auto=format&fit=crop&q=80&w=800',
+        'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&q=80&w=800',
+      ],
+      'Lò vi sóng & Lò nướng': [
+        'https://images.unsplash.com/photo-1574269909862-7e1d70bb8078?auto=format&fit=crop&q=80&w=800',
+        'https://images.unsplash.com/photo-1585659722983-3a675dabf23d?auto=format&fit=crop&q=80&w=800',
+      ],
+      'Điều hòa & Máy lọc': [
+        'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&q=80&w=800',
+      ],
+      'Robot & Máy hút bụi': [
+        'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&q=80&w=800',
+      ],
+      'Nồi cơm & Bếp từ': [
+        'https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&q=80&w=800',
+      ],
+    };
+
+    const fallbackList = categoryFallbacks[detectedCategory] || [
+      'https://images.unsplash.com/photo-1556911220-e15b29be8c8f?auto=format&fit=crop&q=80&w=800'
+    ];
+    const defaultImg = fallbackList[0];
+
+    const rawImgs = Array.isArray(post.imageUrls) && post.imageUrls.length > 0
+      ? post.imageUrls.filter(Boolean)
       : (post.imageUrl ? [post.imageUrl] : []);
-    const fallbackImage = 'https://images.unsplash.com/photo-1584269600464-37b1b58a9fe7?auto=format&fit=crop&q=80&w=800';
-    const primaryImage = rawImages[0] || fallbackImage;
+
+    const photoList = rawImgs.length > 0 ? rawImgs : [defaultImg];
+    const price = Number(post.price || 0);
 
     return {
-      id: post.id || `post-${Date.now()}`,
-      title: post.title || 'Thiết bị gia dụng SecondLife',
-      category: (post.category || 'Tủ lạnh & Tủ đông') as any,
-      brand: post.brand || 'SecondLife',
-      model: post.model || 'Model',
+      id: post.postId || post.id || `post-${Date.now()}`,
+      title: cleanTitle,
+      category: detectedCategory,
+      brand: detectedBrand,
+      model: post.model || 'Standard',
       purchaseYear: 2024,
-      priceVnd: Number(post.price || 0),
-      originalPriceVnd: Number(post.aiSuggestedPrice || post.price || 0),
-      conditionGrade: (post.itemCondition || 'Like New') as any,
-      declaredConditionText: post.itemCondition || 'Tình trạng tốt',
-      description: post.description || post.aiDescription || 'Đã qua thẩm định SecondLife.',
+      priceVnd: price,
+      originalPriceVnd: Number(post.aiSuggestedPrice || (price > 0 ? Math.round(price * 1.15) : 0)),
+      conditionGrade: detectedGrade,
+      declaredConditionText: post.itemCondition || (detectedGrade === 'Like New' ? 'Độ mới 99%, nguyên zin chưa sửa chữa' : 'Tình trạng tốt, hoạt động ổn định'),
+      description: post.description || post.aiDescription || 'Đã qua thẩm định và xác thực trên hệ thống SecondLife.',
       location: 'Việt Nam',
-      sellerId: post.user?.id || post.userId || 'seller',
+      sellerId: post.sellerId || post.user?.id || post.userId || '1e338576-457a-4371-9822-52ca04e31546',
       sellerName: post.user?.fullName || post.sellerName || 'Người bán SecondLife',
       sellerRating: 5.0,
-      sellerCompletedOrders: 1,
+      sellerCompletedOrders: 3,
       sellerVerified: true,
       status: (post.status === 'ACTIVE' ? 'active' : post.status === 'DRAFT' ? 'draft' : 'reserved') as any,
-      backendStatus: post.status,
+      backendStatus: post.status || 'ACTIVE',
       rejectionReason: post.rejectionReason,
-      createdAt: post.createdAt || new Date().toISOString(),
+      createdAt: post.publishedAt || post.createdAt || new Date().toISOString(),
       isInspectionGuaranteed: true,
-      requiresInspection: Number(post.price || 0) > 5000000,
+      requiresInspection: price > 5000000,
       photos: {
-        front: rawImages[0] || primaryImage,
-        back: rawImages[1] || primaryImage,
-        screenOrDetails: rawImages[2] || primaryImage,
-        accessoriesOrBox: rawImages[3] || primaryImage,
-        serialOrReceipt: rawImages[4] || primaryImage,
+        front: photoList[0] || defaultImg,
+        back: photoList[1] || photoList[0] || defaultImg,
+        screenOrDetails: photoList[2] || photoList[0] || defaultImg,
+        accessoriesOrBox: photoList[3] || photoList[0] || defaultImg,
+        serialOrReceipt: photoList[4] || photoList[0] || defaultImg,
       },
-      photoGallery: rawImages.length > 0 ? rawImages : [primaryImage],
+      photoGallery: photoList,
+      aiPriceEstimation: {
+        minVnd: Math.round(price * 0.9),
+        maxVnd: Math.round(price * 1.1),
+        suggestedVnd: price,
+        quickSaleVnd: Math.round(price * 0.85),
+        confidence: 96,
+        daysToSell: 3,
+      },
     };
   }, []);
 
@@ -340,12 +463,13 @@ export default function App() {
     try {
       let postsData: any[] = [];
       try {
-        const publicRes = await postService.getPublicPosts();
-        const items = Array.isArray(publicRes) ? publicRes : (publicRes?.content || publicRes?.items || []);
-        if (items && items.length > 0) {
-          postsData = items.filter((p: any) => p.status === 'ACTIVE');
+        const publicRes = await postService.getPublicListings(0, 100);
+        if (publicRes && publicRes.length > 0) {
+          postsData = publicRes;
         }
-      } catch {}
+      } catch (err) {
+        console.warn('Lỗi gọi public listings:', err);
+      }
 
       // CHỈ gọi adminPostService.getAdminPosts nếu người dùng có vai trò ADMIN (tránh 403 Forbidden)
       const isAdmin = currentUser?.role === 'admin' || currentRole === 'admin';
@@ -366,9 +490,10 @@ export default function App() {
           const myRes = await postService.getMyPosts(0, 50);
           const myItems = Array.isArray(myRes) ? myRes : (myRes?.content || myRes?.items || []);
           if (myItems && myItems.length > 0) {
-            const existingIds = new Set(postsData.map((p: any) => p.id));
+            const existingIds = new Set(postsData.map((p: any) => p.postId || p.id));
             for (const myItem of myItems) {
-              if (!existingIds.has(myItem.id)) {
+              const myId = myItem.postId || myItem.id;
+              if (!existingIds.has(myId)) {
                 postsData.push(myItem);
               }
             }
@@ -497,11 +622,15 @@ export default function App() {
     }
   }, [currentUser, currentRole, listings]);
 
-  // Load orders and listings on user, role, or tab change
+  // Refresh listings when their query inputs or the active tab change.
   React.useEffect(() => {
     loadListingsFromBackend();
+  }, [loadListingsFromBackend, activeTab]);
+
+  // Orders also use the latest listings to map each order.
+  React.useEffect(() => {
     loadUserOrders();
-  }, [loadListingsFromBackend, loadUserOrders, activeTab]);
+  }, [loadUserOrders, activeTab]);
 
   const handleOrderPlaced = (newOrder: EscrowOrder) => {
     setOrders((prev) => [newOrder, ...prev]);
@@ -577,7 +706,7 @@ export default function App() {
     setOrders((prev) =>
       prev.map((o) => (o.id === order.id ? { ...o, escrowStatus: 'DISPUTED' } : o))
     );
-    showToast(`Đã mở khiếu nại đơn hàng #${order.id}! Tiền trong Escrow đã được đóng bằng để Admin phân xử.`);
+    showToast(`Đã mở khiếu nại đơn hàng #${order.id}! Tiền trong Escrow đã được đóng băng để Admin phân xử.`);
   };
 
   const handleCompleteInspection = (
@@ -643,7 +772,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col font-sans bg-[#faf8f5] text-[#24263e] selection:bg-[#c34c36] selection:text-white">
       {/* Navigation */}
-      {activeTab !== 'admin-dashboard' && activeTab !== 'staff-workspace' && (
+      {activeTab !== 'admin-dashboard' && (
         <Navbar
           currentRole={currentRole}
           onRoleChange={handleRoleChange}
@@ -677,7 +806,15 @@ export default function App() {
           userCreditBalance={userCreditBalance}
           userCredit={userCredit}
           walletBalance={walletBalance}
-          onOpenSellerRegister={() => setIsSellerRegistrationModalOpen(true)}
+          onOpenSellerRegister={() => {
+            if (currentUser && ['admin', 'inspector'].includes(currentUser.role)) {
+              showToast(lang === 'vi'
+                ? 'Tài khoản Quản trị viên và Kỹ sư Hub không được đăng ký làm Người Bán.'
+                : 'Admin and Inspector roles cannot register as sellers.');
+              return;
+            }
+            setIsSellerRegistrationModalOpen(true);
+          }}
         />
       )}
 
@@ -713,7 +850,11 @@ export default function App() {
                 requireAuth(undefined, lang === 'vi'
                   ? 'Vui lòng đăng nhập để thử nghiệm định giá AI và đăng bán sản phẩm.'
                   : 'Please log in to experience AI valuation and create listings.');
-              } else if (currentUser.role !== 'seller') {
+              } else if (['admin', 'inspector'].includes(currentUser.role)) {
+                showToast(lang === 'vi'
+                  ? 'Tài khoản Quản trị viên và Kỹ sư Hub không được đăng ký làm Người Bán.'
+                  : 'Admin and Inspector roles cannot register as sellers.');
+              } else if (currentUser.role !== 'seller' && currentUser.role !== 'staff') {
                 setIsSellerRegistrationModalOpen(true);
               } else {
                 setActiveTab('create-listing');
@@ -746,7 +887,7 @@ export default function App() {
         )}
 
         {activeTab === 'create-listing' && (
-          currentUser && currentUser.role !== 'seller' ? (
+          currentUser && currentUser.role !== 'seller' && currentUser.role !== 'staff' ? (
             <div className="py-12 px-4 text-center max-w-xl mx-auto space-y-4">
               <div className="w-16 h-16 rounded-3xl bg-[#faf8f5] text-[#24263e] flex items-center justify-center mx-auto shadow-md">
                 <Store className="w-8 h-8" />
@@ -767,7 +908,15 @@ export default function App() {
                   {lang === 'vi' ? 'Quay lại Sàn' : 'Back to Market'}
                 </button>
                 <button
-                  onClick={() => setIsSellerRegistrationModalOpen(true)}
+                  onClick={() => {
+                    if (['admin', 'inspector'].includes(currentUser.role)) {
+                      showToast(lang === 'vi'
+                        ? 'Tài khoản Quản trị viên và Kỹ sư Hub không được đăng ký làm Người Bán.'
+                        : 'Admin and Inspector roles cannot register as sellers.');
+                      return;
+                    }
+                    setIsSellerRegistrationModalOpen(true);
+                  }}
                   className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c34c36] to-[#fce5da] text-white text-sm font-bold shadow-md hover:opacity-95 transition cursor-pointer"
                 >
                   {lang === 'vi' ? 'Đăng Ký Người Bán Ngay' : 'Register as Seller Now'}
@@ -809,7 +958,10 @@ export default function App() {
             listings={listings}
             orders={orders}
             lang={lang}
-            onViewWebsite={() => setActiveTab('marketplace')}
+            currentUser={currentUser}
+            onOpenProfile={() => setIsProfileDialogOpen(true)}
+            onLogout={() => setIsLogoutModalOpen(true)}
+            onViewWebsite={() => setActiveTab('home')}
           />
         )}
 
@@ -820,38 +972,25 @@ export default function App() {
             listings={listings}
             onResolveDispute={handleResolveDispute}
             lang={lang}
-            onViewWebsite={() => setActiveTab('marketplace')}
+            currentUser={currentUser}
+            onOpenProfile={() => setIsProfileDialogOpen(true)}
+            onLogout={() => setIsLogoutModalOpen(true)}
           />
         )}
 
         {activeTab === 'chat' && (
-          <div className="max-w-3xl mx-auto space-y-6 pb-16">
-            <div className="bg-[#FFFFFF] rounded-2xl p-8 border border-slate-200 shadow-xs text-center space-y-4">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-[#c34c36] to-[#fce5da] text-white flex items-center justify-center mx-auto shadow-md">
-                <Sparkles className="w-6 h-6" />
-              </div>
-              <h2 className="text-xl font-bold text-[#24263e]">
-                {lang === 'vi' ? 'Hệ Thống Đàm Phán & Chống Lừa Đảo AI' : 'Smart Negotiation & Anti-Fraud Chat'}
-              </h2>
-              <p className="text-xs sm:text-sm text-[#24263e]/70 max-w-lg mx-auto">
-                {lang === 'vi'
-                  ? 'Bấm chọn bất kỳ sản phẩm nào trên Sàn để mở phiên chat đàm phán giá. AI sẽ phân tích đề xuất và cảnh báo nếu có dấu hiệu chuyển khoản ngoài hệ thống.'
-                  : 'Select any listing in the marketplace to start negotiating with live AI counter-offer advice and anti-scam warnings.'}
-              </p>
-              <button
-                onClick={() => {
-                  if (!currentUser) {
-                    requireAuth(undefined, lang === 'vi' ? 'Vui lòng đăng nhập để sử dụng tính năng Chat & Đàm phán.' : 'Please log in to chat.');
-                    return;
-                  }
-                  setChatListing(listings[0]);
-                }}
-                className="px-5 py-2.5 bg-gradient-to-r from-[#c34c36] to-[#fce5da] hover:opacity-95 text-white rounded-xl text-xs sm:text-sm font-bold shadow-md transition cursor-pointer"
-              >
-                Mở Hội Thoại Thử Nghiệm với Sản Phẩm Mẫu &rarr;
-              </button>
-            </div>
-          </div>
+          <InboxView 
+            listings={listings}
+            currentRole={currentRole}
+            lang={lang}
+            onOpenChat={(listing) => {
+              if (!currentUser) {
+                requireAuth(undefined, lang === 'vi' ? 'Vui lòng đăng nhập để sử dụng tính năng Chat & Đàm phán.' : 'Please log in to chat.');
+                return;
+              }
+              setChatListing(listing);
+            }}
+          />
         )}
       </main>
 
@@ -969,7 +1108,13 @@ export default function App() {
               ? `Chào mừng ${user.name} (${user.role === 'buyer' ? 'Người Mua' : user.role === 'seller' ? 'Người Bán' : user.role === 'inspector' ? 'Kỹ Sư Hub' : user.role === 'staff' ? 'Nhân Viên Vận Hành' : 'Quản Trị'}) đã đăng nhập!`
               : `Welcome ${user.name}! Logged in successfully as ${user.role.toUpperCase()}.`
           );
-          if (pendingCheckoutItem) {
+          if (user.role === 'admin') {
+            setActiveTab('admin-dashboard');
+          } else if (user.role === 'inspector') {
+            setActiveTab('inspection-hub');
+          } else if (user.role === 'staff') {
+            setActiveTab('home');
+          } else if (pendingCheckoutItem) {
             setSelectedListing(null);
             setCheckoutListing(pendingCheckoutItem);
             setPendingCheckoutItem(null);
@@ -1010,6 +1155,7 @@ export default function App() {
           setVerifyEmailTarget(targetEmail);
           setIsVerifyEmailModalOpen(true);
         }}
+        onOpenTopUp={() => setIsTopUpModalOpen(true)}
       />
 
       {/* 6-Digit OTP Email Verification Modal Popup */}
@@ -1060,6 +1206,9 @@ export default function App() {
       <TopUpModal
         isOpen={isTopUpModalOpen}
         onClose={() => setIsTopUpModalOpen(false)}
+        currentUser={currentUser}
+        currentRole={currentRole}
+        lang={lang}
         currentCredit={userCreditBalance}
         userCredit={userCredit}
         walletBalance={walletBalance}
@@ -1084,7 +1233,7 @@ export default function App() {
       />
 
       {/* E-Commerce Footer */}
-      {activeTab !== 'admin-dashboard' && (
+      {activeTab !== 'admin-dashboard' && activeTab !== 'inspection-hub' && activeTab !== 'staff-workspace' && (
         <Footer
           lang={lang}
           currentRole={currentRole}

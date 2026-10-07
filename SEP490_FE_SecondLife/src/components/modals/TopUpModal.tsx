@@ -17,9 +17,11 @@ import {
   Layers,
   Flame,
   Award,
-  ShoppingBag
+  ShoppingBag,
+  ShieldCheck,
+  ZoomIn,
 } from 'lucide-react';
-import { TopupPackage, UserCredit, UserWallet, DepositResponseDTO } from '../../types';
+import { TopupPackage, UserCredit, UserWallet, DepositResponseDTO, UserProfile, UserRole, Language } from '../../types';
 import { topupService, walletService, sellerCreditService } from '../../services';
 import logoImg from '../../assets/logo.png';
 import { formatVND } from '../../utils/translations';
@@ -27,6 +29,8 @@ import { formatVND } from '../../utils/translations';
 interface TopUpModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUser?: UserProfile | null;
+  currentRole?: UserRole;
   currentCredit?: number;
   userCredit?: UserCredit;
   walletBalance?: number;
@@ -34,6 +38,7 @@ interface TopUpModalProps {
   onUserCreditUpdated?: (newCredit: UserCredit) => void;
   onWalletUpdated?: (newBalance: number) => void;
   initialTab?: 'wallet' | 'packages';
+  lang?: Language;
 }
 
 const COMBO_PACKAGES: TopupPackage[] = [
@@ -167,6 +172,8 @@ const getPkgTotalCredits = (pkg?: TopupPackage | null) => getPkgCredits(pkg) + g
 export const TopUpModal: React.FC<TopUpModalProps> = ({
   isOpen,
   onClose,
+  currentUser,
+  currentRole,
   currentCredit = 0,
   userCredit: initialUserCredit,
   walletBalance: initialWalletBalance,
@@ -174,9 +181,12 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   onUserCreditUpdated,
   onWalletUpdated,
   initialTab = 'wallet',
+  lang = 'vi',
 }) => {
-  // Active primary tab: 'wallet' (nạp tiền) or 'packages' (mua gói xu)
-  const [activeTab, setActiveTab] = useState<'wallet' | 'packages'>(initialTab);
+  const isBuyerRole = (currentRole === 'buyer') || (currentUser?.role === 'buyer');
+
+  // Active primary tab: 'wallet' (nạp tiền) or 'packages' (mua gói xu). Buyers only need 'wallet'
+  const [activeTab, setActiveTab] = useState<'wallet' | 'packages'>(isBuyerRole ? 'wallet' : initialTab);
 
   // Wallet State
   const [wallet, setWallet] = useState<UserWallet | null>(null);
@@ -187,6 +197,8 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   const [creatingDeposit, setCreatingDeposit] = useState(false);
   const [depositError, setDepositError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number>(300); // 5 minutes in seconds
+  const [isZoomQrOpen, setIsZoomQrOpen] = useState<boolean>(false);
 
   // Packages State
   const [packages, setPackages] = useState<TopupPackage[]>([]);
@@ -215,7 +227,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   // Load wallet & packages when modal opens
   useEffect(() => {
     if (isOpen) {
-      setActiveTab(initialTab);
+      setActiveTab(isBuyerRole ? 'wallet' : initialTab);
       setDepositRequest(null);
       setPendingPackage(null);
       setAutoActivating(false);
@@ -223,14 +235,39 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
       setPurchaseError(null);
       setPackageSuccess(false);
       loadWallet();
-      loadPackagesAndCredit();
+      if (!isBuyerRole) {
+        loadPackagesAndCredit();
+      }
     } else {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
     }
-  }, [isOpen, initialTab]);
+  }, [isOpen, initialTab, isBuyerRole]);
+
+  // Timer countdown for deposit request
+  useEffect(() => {
+    let timerInterval: NodeJS.Timeout | null = null;
+    if (depositRequest && depositRequest.status === 'PENDING') {
+      timerInterval = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerInterval!);
+            setDepositRequest(null);
+            setDepositError('Hết thời gian giao dịch (5 phút). Vui lòng tạo yêu cầu nạp tiền mới nếu vẫn muốn giao dịch.');
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else {
+      setTimeLeft(300);
+    }
+    return () => {
+      if (timerInterval) clearInterval(timerInterval);
+    };
+  }, [depositRequest]);
 
   // Polling wallet balance when a deposit request is pending
   useEffect(() => {
@@ -527,10 +564,14 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-                Ví Tiền &amp; Quyền Sử Dụng Second<span className="text-[#c34c36]">Life</span>
+                {isBuyerRole
+                  ? <>Ví Escrow &amp; Nạp Tiền Second<span className="text-[#c34c36]">Life</span></>
+                  : <>Ví Tiền &amp; Quyền Sử Dụng Second<span className="text-[#c34c36]">Life</span></>}
               </h3>
               <p className="text-[11px] text-[#fce5da] font-medium leading-tight">
-                Nạp tiền tự động qua VietQR (SePay) &bull; Mua gói lượt đăng tin AI
+                {isBuyerRole
+                  ? 'Nạp tiền tự động qua VietQR (SePay) • Bảo đảm giao dịch an toàn qua Quỹ Escrow'
+                  : 'Nạp tiền tự động qua VietQR (SePay) • Mua gói lượt đăng tin AI'}
               </p>
             </div>
           </div>
@@ -557,25 +598,41 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-xs font-bold font-mono">
-              <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
-                Tin: <span className="font-black text-[#c34c36]">{userCredit.postCredits ?? 0}</span>
-              </span>
-              <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
-                AI Chat: <span className="font-black text-[#c34c36]">{userCredit.chatCredits ?? 0}</span>
-              </span>
-              <button
-                onClick={loadWallet}
-                title="Làm mới số dư"
-                className="p-1 rounded-lg bg-white border border-[#24263e]/15 text-slate-600 hover:text-[#24263e] cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${walletLoading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
+            {!isBuyerRole ? (
+              <div className="flex items-center gap-2 text-xs font-bold font-mono">
+                <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
+                  Tin: <span className="font-black text-[#c34c36]">{userCredit.postCredits ?? 0}</span>
+                </span>
+                <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
+                  AI Chat: <span className="font-black text-[#c34c36]">{userCredit.chatCredits ?? 0}</span>
+                </span>
+                <button
+                  onClick={loadWallet}
+                  title="Làm mới số dư"
+                  className="p-1 rounded-lg bg-white border border-[#24263e]/15 text-slate-600 hover:text-[#24263e] cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${walletLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs font-bold">
+                <span className="text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-2.5 py-0.5 rounded-xl font-bold flex items-center gap-1 shadow-2xs">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  Bảo Lãnh Ký Quỹ Escrow
+                </span>
+                <button
+                  onClick={loadWallet}
+                  title="Làm mới số dư"
+                  className="p-1 rounded-lg bg-white border border-[#24263e]/15 text-slate-600 hover:text-[#24263e] cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${walletLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Tab Switcher */}
+        {/* Tab Switcher - Only show package tab if NOT buyer */}
         <div className="flex border-b border-[#24263e]/10 bg-white/70 px-5 pt-1.5 pb-1 shrink-0">
           <button
             onClick={() => {
@@ -588,24 +645,26 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
               }`}
           >
             <QrCode className="w-3.5 h-3.5" />
-            <span>1. Nạp Tiền Vào Ví (VietQR)</span>
+            <span>{isBuyerRole ? 'Nạp Tiền Vào Ví Escrow (VietQR)' : '1. Nạp Tiền Vào Ví (VietQR)'}</span>
             {depositRequest && depositRequest.status === 'PENDING' && (
               <span className="w-2 h-2 rounded-full bg-[#c34c36] animate-ping ml-1" title="Có giao dịch nạp đang chờ" />
             )}
           </button>
-          <button
-            onClick={() => {
-              setActiveTab('packages');
-              setDepositError(null);
-            }}
-            className={`pb-2 px-3.5 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer border-b-2 ${activeTab === 'packages'
-                ? 'border-[#c34c36] text-[#c34c36]'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>2. Mua Gói Quyền Sử Dụng (Trừ ví)</span>
-          </button>
+          {!isBuyerRole && (
+            <button
+              onClick={() => {
+                setActiveTab('packages');
+                setDepositError(null);
+              }}
+              className={`pb-2 px-3.5 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer border-b-2 ${activeTab === 'packages'
+                  ? 'border-[#c34c36] text-[#c34c36]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>2. Mua Gói Quyền Sử Dụng (Trừ ví)</span>
+            </button>
+          )}
         </div>
 
         {/* Modal Scrollable Body */}
@@ -784,12 +843,6 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                           >
                             Nạp Thêm Lần Nữa
                           </button>
-                          <button
-                            onClick={() => setActiveTab('packages')}
-                            className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 transition cursor-pointer shadow-sm"
-                          >
-                            Chuyển Sang Mua Gói Xu &rarr;
-                          </button>
                         </div>
                       )}
                     </div>
@@ -805,10 +858,13 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                               className="w-36 h-36 sm:w-38 sm:h-38 object-contain rounded-xl"
                             />
                           </div>
-                          <span className="text-[10px] text-slate-500 font-semibold mt-1 flex items-center gap-1">
+                          <span className="text-[10px] text-slate-500 font-semibold mt-2 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
-                            Đang chờ nhận tiền qua SePay...
+                            Đang chờ nhận tiền ({Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')})
                           </span>
+                          <button onClick={() => setIsZoomQrOpen(true)} className="text-[10px] text-[#c34c36] font-bold mt-1.5 hover:underline cursor-pointer flex items-center gap-1">
+                            <ZoomIn className="w-3 h-3" /> Phóng to mã QR
+                          </button>
                         </div>
 
                         {/* Transfer Credentials (2-Column Grid + Full Width Transfer Code) */}
@@ -1231,44 +1287,48 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                       )}
 
                       {/* Summary & Purchase Action Bar */}
-                      <div className="pt-3 border-t border-[#24263e]/10 flex flex-col sm:flex-row items-center justify-between gap-3">
-                        <div className="text-xs text-slate-700 w-full sm:w-auto">
+                      <div className="pt-3.5 pb-2 border-t border-[#24263e]/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white/80 p-3 sm:px-4 rounded-2xl shadow-2xs">
+                        <div className="flex-1 min-w-0">
                           {selectedPkg ? (
-                            <div>
-                              <span className="font-bold text-slate-500">Đang chọn: </span>
-                              <span className="font-black text-[#24263e]">{getPkgName(selectedPkg)}</span>
-                              <span className="mx-1.5">•</span>
-                              <span className="font-mono font-black text-[#c34c36]">
-                                {formatVND(getPkgPrice(selectedPkg))}
-                              </span>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-semibold text-slate-500">Đang chọn:</span>
+                                <span className="text-xs sm:text-sm font-black text-[#24263e]">{getPkgName(selectedPkg)}</span>
+                                <span className="text-xs font-mono font-black text-[#c34c36]">
+                                  ({formatVND(getPkgPrice(selectedPkg))})
+                                </span>
+                              </div>
+                              <div className="text-[11px] font-medium">
+                                {currentWalletBalance >= getPkgPrice(selectedPkg) ? (
+                                  <span className="text-emerald-700 font-bold flex items-center gap-1">
+                                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                    Số dư ví: {formatVND(currentWalletBalance)} (Đủ điều kiện trừ ví)
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-800 font-semibold flex items-center gap-1 flex-wrap">
+                                    <QrCode className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                    <span>Số dư ví: <strong className="font-mono">{formatVND(currentWalletBalance)}</strong></span>
+                                    <span>•</span>
+                                    <span>Cần nạp thiếu: <strong className="text-[#c34c36] font-mono font-black">{formatVND(getPkgPrice(selectedPkg) - currentWalletBalance)}</strong></span>
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           ) : (
-                            <span className="text-slate-400 italic">Vui lòng chọn một gói nạp ở trên</span>
+                            <span className="text-xs text-slate-400 italic">Vui lòng chọn một gói nạp ở trên để tiếp tục</span>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 w-full sm:w-auto">
-                          {selectedPkg && currentWalletBalance < getPkgPrice(selectedPkg) && (
-                            <button
-                              type="button"
-                              disabled={creatingDeposit || purchasing}
-                              onClick={() => handleConfirmPurchase(selectedPkg)}
-                              className="px-4 py-3 rounded-2xl font-bold text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition cursor-pointer flex items-center gap-1.5 shrink-0"
-                            >
-                              <QrCode className="w-3.5 h-3.5 text-amber-800" />
-                              <span>Nạp Thiếu {formatVND(getPkgPrice(selectedPkg) - currentWalletBalance)} &rarr;</span>
-                            </button>
-                          )}
-
+                        <div className="w-full sm:w-auto shrink-0">
                           <button
                             disabled={!selectedPkg || purchasing || creatingDeposit || packagesLoading}
                             onClick={() => handleConfirmPurchase(selectedPkg)}
-                            className="flex-1 sm:flex-none px-7 py-3 rounded-2xl font-black text-xs sm:text-sm text-white bg-gradient-to-r from-[#c34c36] to-[#dc4729] hover:opacity-95 active:scale-[0.99] transition shadow-md disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                            className="w-full sm:w-auto px-6 py-3 rounded-2xl font-black text-xs sm:text-sm text-white bg-gradient-to-r from-[#c34c36] to-[#dc4729] hover:opacity-95 active:scale-[0.99] transition shadow-md disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
                           >
                             {creatingDeposit ? (
                               <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
-                                <span>Đang tạo mã QR VietQR...</span>
+                                <span>Đang tạo mã VietQR...</span>
                               </>
                             ) : purchasing ? (
                               <>
@@ -1277,14 +1337,14 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                               </>
                             ) : selectedPkg && currentWalletBalance < getPkgPrice(selectedPkg) ? (
                               <>
-                                <QrCode className="w-4 h-4" />
+                                <QrCode className="w-4 h-4 shrink-0" />
                                 <span>
-                                  Xác Nhận Mua Gói (Nạp thiếu {formatVND(getPkgPrice(selectedPkg) - currentWalletBalance)})
+                                  Quét QR Nạp Thiếu & Mua Gói ({formatVND(Math.max(getPkgPrice(selectedPkg) - currentWalletBalance, 10000))})
                                 </span>
                               </>
                             ) : (
                               <>
-                                <ShoppingBag className="w-4 h-4" />
+                                <ShoppingBag className="w-4 h-4 shrink-0" />
                                 <span>
                                   Xác Nhận Mua Gói ({selectedPkg ? formatVND(getPkgPrice(selectedPkg)) : ''})
                                 </span>
@@ -1301,6 +1361,22 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Zoom QR Modal Overlay */}
+      {isZoomQrOpen && vietQrUrl && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="relative bg-white p-5 rounded-3xl max-w-sm w-full flex flex-col items-center shadow-2xl">
+            <button onClick={() => setIsZoomQrOpen(false)} className="absolute top-3 right-3 p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-600 transition cursor-pointer">
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="text-sm font-black text-slate-800 mb-4 mt-2">Mã VietQR Phóng To</h3>
+            <img src={vietQrUrl} alt="VietQR Zoom" className="w-full h-auto object-contain rounded-xl border border-slate-200" />
+            <p className="text-[11px] text-slate-500 font-medium mt-4 text-center">
+              Dùng app ngân hàng bất kỳ để quét mã này
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -15,7 +15,7 @@ export interface PageResponse<T> {
 }
 
 function isNoV1Path(path: string): boolean {
-  if (
+  return (
     path.startsWith('/auth') ||
     path.startsWith('/users') ||
     path.startsWith('/seller-verifications') ||
@@ -23,15 +23,7 @@ function isNoV1Path(path: string): boolean {
     path.startsWith('/staff') ||
     path.startsWith('/payment-callbacks') ||
     path.startsWith('/health')
-  ) {
-    return true;
-  }
-  if (
-    path.startsWith('/admin/users') || path.startsWith('/admin/posts')
-    || path.startsWith('/admin/catalog')) {
-    return false;
-  }
-  return true;
+  );
 }
 
 export function resolveApiUrl(endpoint: string): string {
@@ -320,15 +312,17 @@ export async function request<T>(
       const errorMessage =
         resData?.message ||
         resData?.error ||
-        (response.status === 403 ? 'B?n kh�ng c� quy?n th?c hi?n h�nh d?ng n�y.' : `HTTP Error ${response.status}: ${response.statusText}`);
+        (response.status === 403 ? 'Bạn không có quyền thực hiện hành động này.' : `HTTP Error ${response.status}: ${response.statusText}`);
+
       throw new Error(errorMessage);
     }
 
     return resData as ApiResponse<T>;
   } catch (error: any) {
     if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      throw new Error('Kh�ng th? k?t n?i d?n Backend Server. Vui l�ng ki?m tra l?i backend (port 8080).');
+      throw new Error('Không thể kết nối đến Backend Server. Vui lòng kiểm tra lại backend (port 8080).');
     }
     throw error;
   }
 }
+

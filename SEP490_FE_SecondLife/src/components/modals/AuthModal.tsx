@@ -298,6 +298,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         email: res.user.email,
         role: mappedRole,
         phone: res.user.phone || '',
+        avatar: res.user.avatarUrl || undefined,
         address: ''
       });
       onClose();
@@ -400,6 +401,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         email: res.user.email,
         role: mappedRole,
         phone: res.user.phone || '',
+        avatar: res.user.avatarUrl || undefined,
         address: ''
       });
       onClose();
@@ -1235,7 +1237,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     {verifyDigits.map((digit, idx) => (
                       <input
                         key={idx}
-                        ref={(el) => (verifyOtpInputRefs.current[idx] = el)}
+                        ref={(el) => {
+                          verifyOtpInputRefs.current[idx] = el;
+                        }}
                         type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
