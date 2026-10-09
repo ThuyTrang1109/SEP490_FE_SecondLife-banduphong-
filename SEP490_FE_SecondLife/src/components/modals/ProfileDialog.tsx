@@ -47,8 +47,13 @@ import {
   FALLBACK_PROVINCES,
   resolveProvinceFromText,
   normalizeAddressText,
+  addressService,
+  OpenApiProvince,
+  OpenApiDistrict,
+  OpenApiWard,
 } from '../../services';
 import { LiveFaceScannerModal, VnptEkycResultData } from './LiveFaceScannerModal';
+import { saveSellerAddress } from '../../utils/addressUtils';
 
 export type ProfileTab = 'info' | 'wallet' | 'kyc' | 'security' | 'settings';
 
@@ -59,8 +64,8 @@ const isStrongPassword = (pass: string): boolean => {
 
 interface ProfileDialogProps {
   isOpen: boolean;
-  onClose: () => void;
   currentUser: UserProfile | null;
+  currentRole?: UserRole;
   onUpdateProfile: (updated: UserProfile) => void;
   onRoleChange: (role: UserRole) => void;
   onLogout: () => void;
@@ -75,6 +80,7 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
   isOpen,
   onClose,
   currentUser,
+  currentRole,
   onUpdateProfile,
   onRoleChange,
   onLogout,
@@ -185,6 +191,216 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
   const [isLoadingWards, setIsLoadingWards] = useState(false);
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
 
+  // User Profile Open API Address state (Tỉnh/Thành, Quận/Huyện, Phường/Xã)
+  const [userProvinces, setUserProvinces] = useState<OpenApiProvince[]>([]);
+  const [userDistricts, setUserDistricts] = useState<OpenApiDistrict[]>([]);
+  const [userWards, setUserWards] = useState<OpenApiWard[]>([]);
+
+  const [selectedProvinceCode, setSelectedProvinceCode] = useState<number | ''>('');
+  const [selectedProvinceName, setSelectedProvinceName] = useState<string>(currentUser.province || currentUser.provinceName || '');
+  const [selectedDistrictCode, setSelectedDistrictCode] = useState<number | ''>('');
+  const [selectedDistrictName, setSelectedDistrictName] = useState<string>(currentUser.district || '');
+  const [selectedWardCode, setSelectedWardCode] = useState<number | ''>('');
+  const [selectedWardName, setSelectedWardName] = useState<string>(currentUser.ward || currentUser.wardName || '');
+  const [userStreetAddress, setUserStreetAddress] = useState<string>(currentUser.streetAddress || '');
+
+  const [isLoadingUserProvinces, setIsLoadingUserProvinces] = useState(false);
+  const [isLoadingUserDistricts, setIsLoadingUserDistricts] = useState(false);
+  const [isLoadingUserWards, setIsLoadingUserWards] = useState(false);
+
+  const computeFullAddress = () => {
+    const parts = [
+      userStreetAddress.trim(),
+      selectedWardName.trim(),
+      selectedDistrictName.trim(),
+      selectedProvinceName.trim(),
+    ].filter(Boolean);
+    return parts.join(', ');
+  };
+
+  // Tải danh sách Open API và khớp địa chỉ người dùng
+  const syncOpenApiAddress = async (
+    targetProvince?: string,
+    targetDistrict?: string,
+    targetWard?: string,
+    targetStreet?: string
+  ) => {
+    setIsLoadingUserProvinces(true);
+    try {
+      const pList = await addressService.getProvinces();
+      setUserProvinces(pList);
+
+      if (targetStreet) {
+        setUserStreetAddress(targetStreet);
+      }
+
+      const provQuery = (targetProvince || '').trim().toLowerCase();
+      if (!provQuery) return;
+
+      const cleanQuery = (s: string) =>
+        s.toLowerCase().replace(/^(tỉnh|thành phố|tp\.|tp|quận|huyện|thị xã|phường|xã|thị trấn)\s+/gi, '').trim();
+
+      const normalizedProvQuery = cleanQuery(provQuery);
+
+      const foundProv = pList.find((p) => {
+        const pNorm = cleanQuery(p.name);
+        return (
+          p.name.toLowerCase() === provQuery ||
+          pNorm === normalizedProvQuery ||
+          p.name.toLowerCase().includes(provQuery) ||
+          provQuery.includes(p.name.toLowerCase()) ||
+          pNorm.includes(normalizedProvQuery) ||
+          normalizedProvQuery.includes(pNorm)
+        );
+      });
+
+      if (foundProv) {
+        setSelectedProvinceCode(foundProv.code);
+        setSelectedProvinceName(foundProv.name);
+
+        setIsLoadingUserDistricts(true);
+        const dList = await addressService.getDistricts(foundProv.code);
+        setUserDistricts(dList);
+        setIsLoadingUserDistricts(false);
+
+        const distQuery = (targetDistrict || '').trim().toLowerCase();
+        if (!distQuery) return;
+
+        const normalizedDistQuery = cleanQuery(distQuery);
+
+        const foundDist = dList.find((d) => {
+          const dNorm = cleanQuery(d.name);
+          return (
+            d.name.toLowerCase() === distQuery ||
+            dNorm === normalizedDistQuery ||
+            d.name.toLowerCase().includes(distQuery) ||
+            distQuery.includes(d.name.toLowerCase()) ||
+            dNorm.includes(normalizedDistQuery) ||
+            normalizedDistQuery.includes(dNorm)
+          );
+        });
+
+        if (foundDist) {
+          setSelectedDistrictCode(foundDist.code);
+          setSelectedDistrictName(foundDist.name);
+
+          setIsLoadingUserWards(true);
+          const wList = await addressService.getWards(foundDist.code);
+          setUserWards(wList);
+          setIsLoadingUserWards(false);
+
+          const wardQuery = (targetWard || '').trim().toLowerCase();
+          if (!wardQuery) return;
+
+          const normalizedWardQuery = cleanQuery(wardQuery);
+
+          const foundWard = wList.find((w) => {
+            const wNorm = cleanQuery(w.name);
+            return (
+              w.name.toLowerCase() === wardQuery ||
+              wNorm === normalizedWardQuery ||
+              w.name.toLowerCase().includes(wardQuery) ||
+              wardQuery.includes(w.name.toLowerCase()) ||
+              wNorm.includes(normalizedWardQuery) ||
+              normalizedWardQuery.includes(wNorm)
+            );
+          });
+
+          if (foundWard) {
+            setSelectedWardCode(foundWard.code);
+            setSelectedWardName(foundWard.name);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to sync Open API address:', err);
+    } finally {
+      setIsLoadingUserProvinces(false);
+      setIsLoadingUserDistricts(false);
+      setIsLoadingUserWards(false);
+    }
+  };
+
+  const handleUserProvinceChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const rawVal = e.target.value;
+    const pCode = rawVal ? Number(rawVal) : '';
+    setSelectedProvinceCode(pCode);
+    const pObj = userProvinces.find((p) => p.code === pCode);
+    const newProvName = pObj ? pObj.name : '';
+    setSelectedProvinceName(newProvName);
+
+    setSelectedDistrictCode('');
+    setSelectedDistrictName('');
+    setSelectedWardCode('');
+    setSelectedWardName('');
+    setUserDistricts([]);
+    setUserWards([]);
+
+    const newFull = [userStreetAddress.trim(), '', '', newProvName].filter(Boolean).join(', ');
+    setAddress(newFull);
+
+    if (pCode) {
+      setIsLoadingUserDistricts(true);
+      try {
+        const dList = await addressService.getDistricts(pCode);
+        setUserDistricts(Array.isArray(dList) ? dList : []);
+      } catch (err) {
+        console.warn('handleUserProvinceChange error:', err);
+        setUserDistricts([]);
+      } finally {
+        setIsLoadingUserDistricts(false);
+      }
+    }
+  };
+
+  const handleUserDistrictChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const rawVal = e.target.value;
+    const dCode = rawVal ? Number(rawVal) : '';
+    setSelectedDistrictCode(dCode);
+    const dObj = userDistricts.find((d) => d.code === dCode);
+    const newDistName = dObj ? dObj.name : '';
+    setSelectedDistrictName(newDistName);
+
+    setSelectedWardCode('');
+    setSelectedWardName('');
+    setUserWards([]);
+
+    const newFull = [userStreetAddress.trim(), '', newDistName, selectedProvinceName].filter(Boolean).join(', ');
+    setAddress(newFull);
+
+    if (dCode) {
+      setIsLoadingUserWards(true);
+      try {
+        const wList = await addressService.getWards(dCode);
+        setUserWards(Array.isArray(wList) ? wList : []);
+      } catch (err) {
+        console.warn('handleUserDistrictChange error:', err);
+        setUserWards([]);
+      } finally {
+        setIsLoadingUserWards(false);
+      }
+    }
+  };
+
+  const handleUserWardChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const rawVal = e.target.value;
+    const wCode = rawVal ? Number(rawVal) : '';
+    setSelectedWardCode(wCode);
+    const wObj = userWards.find((w) => w.code === wCode);
+    const newWardName = wObj ? wObj.name : '';
+    setSelectedWardName(newWardName);
+
+    const newFull = [userStreetAddress.trim(), newWardName, selectedDistrictName, selectedProvinceName].filter(Boolean).join(', ');
+    setAddress(newFull);
+  };
+
+  const handleUserStreetAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setUserStreetAddress(val);
+    const newFull = [val.trim(), selectedWardName, selectedDistrictName, selectedProvinceName].filter(Boolean).join(', ');
+    setAddress(newFull);
+  };
+
   // Sync state whenever currentUser or modal opens
   useEffect(() => {
     if (currentUser) {
@@ -200,6 +416,18 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
         if (currentUser.bankAccount.bankName) setBankName(currentUser.bankAccount.bankName);
         if (currentUser.bankAccount.accountNumber) setAccountNumber(currentUser.bankAccount.accountNumber);
         if (currentUser.bankAccount.accountHolder) setAccountHolder(currentUser.bankAccount.accountHolder);
+      }
+      if (currentUser.province || currentUser.provinceName) {
+        setSelectedProvinceName(currentUser.province || currentUser.provinceName || '');
+      }
+      if (currentUser.district) {
+        setSelectedDistrictName(currentUser.district || '');
+      }
+      if (currentUser.ward || currentUser.wardName) {
+        setSelectedWardName(currentUser.ward || currentUser.wardName || '');
+      }
+      if (currentUser.streetAddress) {
+        setUserStreetAddress(currentUser.streetAddress || '');
       }
       setIsSellerRegistered(Boolean(currentUser.isSellerRegistered || currentUser.role === 'seller'));
       setShopName(currentUser.shopName || (currentUser.name ? `Gian Hàng ${currentUser.name}` : 'SecondLife Shop'));
@@ -227,10 +455,27 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
               setAvatarUrl(fresh.avatarUrl);
               setImgError(false);
             }
+            if (fresh.province) setSelectedProvinceName(fresh.province);
+            if (fresh.district) setSelectedDistrictName(fresh.district);
+            if (fresh.ward) setSelectedWardName(fresh.ward);
+            if (fresh.streetAddress) setUserStreetAddress(fresh.streetAddress);
+
+            syncOpenApiAddress(
+              fresh.province || currentUser?.province || currentUser?.provinceName,
+              fresh.district || currentUser?.district,
+              fresh.ward || currentUser?.ward || currentUser?.wardName,
+              fresh.streetAddress || currentUser?.streetAddress
+            );
           }
         })
         .catch((err) => {
           console.warn('Backend getMyProfile fallback to local session:', err);
+          syncOpenApiAddress(
+            currentUser?.province || currentUser?.provinceName,
+            currentUser?.district,
+            currentUser?.ward || currentUser?.wardName,
+            currentUser?.streetAddress
+          );
         });
 
       sellerService.getMyVerification()
@@ -621,6 +866,10 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
         },
       });
 
+      const selProv = provinces.find((p) => String(p._id) === String(selectedProvinceId) || String((p as any).id) === String(selectedProvinceId));
+      const selWard = wards.find((w) => String(w._id) === String(selectedWardId) || String((w as any).id) === String(selectedWardId));
+      saveSellerAddress(pickupAddress.trim() || streetAddress.trim(), selWard?.name, selProv?.name);
+
       await shippingService.sendSellerOnboardingEmailCode();
       setHasSentShopOtp(true);
       setShopOtpCountdown(60);
@@ -908,12 +1157,20 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
     setSaveError(null);
     setIsSaving(true);
 
+    const fullAddr = computeFullAddress() || address.trim();
+
     const updated: UserProfile = {
       ...currentUser,
       name: name.trim(),
       email,
       phone: phone.trim(),
-      address,
+      address: fullAddr,
+      province: selectedProvinceName.trim() || undefined,
+      provinceName: selectedProvinceName.trim() || undefined,
+      district: selectedDistrictName.trim() || undefined,
+      ward: selectedWardName.trim() || undefined,
+      wardName: selectedWardName.trim() || undefined,
+      streetAddress: userStreetAddress.trim() || undefined,
       avatar: avatarUrl || currentUser.avatar,
       gender,
       birthday,
@@ -924,11 +1181,23 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
       },
     };
 
+    saveSellerAddress(
+      pickupAddress || fullAddr,
+      selectedWardName.trim() || currentUser?.wardName,
+      selectedProvinceName.trim() || currentUser?.provinceName
+    );
+
     try {
       await userService.updateMyProfile({
         fullName: name.trim(),
         phone: phone.trim() || undefined,
         avatarUrl: avatarUrl || undefined,
+        province: selectedProvinceName.trim() || undefined,
+        district: selectedDistrictName.trim() || undefined,
+        ward: selectedWardName.trim() || undefined,
+        streetAddress: userStreetAddress.trim() || undefined,
+        latitude: null,
+        longitude: null,
       });
 
       onUpdateProfile(updated);
@@ -1102,22 +1371,24 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
             </div>
 
             {/* Right: Trust Badges */}
-            <div className="flex flex-row sm:flex-col items-start sm:items-end gap-1.5 w-full sm:w-auto pt-1 sm:pt-0">
-              <button
-                type="button"
-                onClick={() => setActiveTab('security')}
-                title={lang === 'vi' ? 'Xem chứng nhận định danh eKYC' : 'View eKYC certificate'}
-                className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-3 py-1 rounded-xl border border-emerald-200/80 font-bold text-xs shadow-xs cursor-pointer transition active:scale-95"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{lang === 'vi' ? 'eKYC: Đã Xác Thực CCCD' : 'eKYC: ID Verified'}</span>
-              </button>
-              <div className="inline-flex items-center gap-1 bg-amber-50/90 text-slate-800 px-3 py-1 rounded-xl border border-amber-200/80 text-xs shadow-xs">
-                <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                <span>{lang === 'vi' ? 'Điểm Uy Tín: ' : 'Trust Score: '}</span>
-                <strong className="font-black text-amber-700">99/100</strong>
+            {currentUser.role !== 'buyer' && (
+              <div className="flex flex-row sm:flex-col items-start sm:items-end gap-1.5 w-full sm:w-auto pt-1 sm:pt-0">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('security')}
+                  title={lang === 'vi' ? 'Xem chứng nhận định danh eKYC' : 'View eKYC certificate'}
+                  className="inline-flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-3 py-1 rounded-xl border border-emerald-200/80 font-bold text-xs shadow-xs cursor-pointer transition active:scale-95"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>{lang === 'vi' ? 'eKYC: Đã Xác Thực CCCD' : 'eKYC: ID Verified'}</span>
+                </button>
+                <div className="inline-flex items-center gap-1 bg-amber-50/90 text-slate-800 px-3 py-1 rounded-xl border border-amber-200/80 text-xs shadow-xs">
+                  <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                  <span>{lang === 'vi' ? 'Điểm Uy Tín: ' : 'Trust Score: '}</span>
+                  <strong className="font-black text-amber-700">99/100</strong>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Tab Navigation - Pill Segmented Control Layout: 4 Tabs */}
@@ -1126,11 +1397,10 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('info')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === 'info'
+                className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${activeTab === 'info'
                     ? 'bg-white text-[#c34c36] shadow-sm font-black border border-slate-200/60'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
+                  }`}
               >
                 <User className={`w-4 h-4 shrink-0 ${activeTab === 'info' ? 'text-[#c34c36]' : 'text-slate-500'}`} />
                 <span>{lang === 'vi' ? 'Cá Nhân' : 'Profile'}</span>
@@ -1139,11 +1409,10 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('wallet')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === 'wallet'
+                className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${activeTab === 'wallet'
                     ? 'bg-white text-[#c34c36] shadow-sm font-black border border-slate-200/60'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
+                  }`}
               >
                 <Wallet className={`w-4 h-4 shrink-0 ${activeTab === 'wallet' ? 'text-[#c34c36]' : 'text-slate-500'}`} />
                 <span>{lang === 'vi' ? 'Ví Escrow' : 'Wallet'}</span>
@@ -1152,11 +1421,10 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveTab('security')}
-                className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === 'security' || activeTab === 'kyc'
+                className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${activeTab === 'security' || activeTab === 'kyc'
                     ? 'bg-white text-[#c34c36] shadow-sm font-black border border-slate-200/60'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
+                  }`}
               >
                 <Shield className={`w-4 h-4 shrink-0 ${activeTab === 'security' || activeTab === 'kyc' ? 'text-[#c34c36]' : 'text-slate-500'}`} />
                 <span>{lang === 'vi' ? 'Bảo Mật' : 'Security'}</span>
@@ -1166,11 +1434,10 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveTab('settings')}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                    activeTab === 'settings'
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${activeTab === 'settings'
                       ? 'bg-white text-[#c34c36] shadow-sm font-black border border-slate-200/60'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                  }`}
+                    }`}
                 >
                   <Store className={`w-4 h-4 shrink-0 ${activeTab === 'settings' ? 'text-[#c34c36]' : 'text-slate-500'}`} />
                   <span>{lang === 'vi' ? 'Gian Hàng' : 'Store'}</span>
@@ -1235,85 +1502,189 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
                   </div>
                 </div>
 
+                {currentRole !== 'admin' && (
+                  <>
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">
+                        {lang === 'vi' ? 'Số Điện Thoại (Nhận mã OTP / Bưu tá gọi)' : 'Phone Number (OTP / Courier)'}
+                      </label>
+                      <div className="relative">
+                        <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          required
+                          placeholder="0912 345 678"
+                          className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition shadow-2xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">
+                        {lang === 'vi' ? 'Ngày Sinh' : 'Date of Birth'}
+                      </label>
+                      <div className="relative">
+                        <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="date"
+                          value={birthday}
+                          onChange={(e) => setBirthday(e.target.value)}
+                          className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition shadow-2xs"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {currentRole !== 'admin' && (
                 <div>
                   <label className="text-xs font-bold text-slate-700 mb-1.5 block">
-                    {lang === 'vi' ? 'Số Điện Thoại (Nhận mã OTP / Bưu tá gọi)' : 'Phone Number (OTP / Courier)'}
+                    {lang === 'vi' ? 'Giới Tính' : 'Gender'}
                   </label>
-                  <div className="relative">
-                    <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <div className="grid grid-cols-3 gap-2.5 max-w-sm">
+                    {(['male', 'female', 'other'] as const).map((g) => {
+                      const isSelected = gender === g;
+                      const labels = {
+                        male: lang === 'vi' ? 'Nam' : 'Male',
+                        female: lang === 'vi' ? 'Nữ' : 'Female',
+                        other: lang === 'vi' ? 'Khác' : 'Other',
+                      };
+                      return (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setGender(g)}
+                          className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-2 ${isSelected
+                              ? 'bg-[#c34c36]/10 border-[#c34c36] text-[#c34c36] shadow-2xs font-black'
+                              : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-[#c34c36]' : 'bg-slate-300'}`} />
+                          <span>{labels[g]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Địa Chỉ Hành Chính 3 Cấp & Chi Tiết (Open API) */}
+              {currentRole !== 'admin' && (
+                <div className="p-3.5 bg-gradient-to-br from-[#faf8f5] to-orange-50/20 border border-slate-200 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-[#c34c36]" />
+                      <span>{lang === 'vi' ? 'Địa Chỉ Cư Trú / Nhận Hàng' : 'Residential / Delivery Address'}</span>
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      {lang === 'vi' ? 'Dữ liệu hành chính chuẩn (Open API)' : 'Standard administrative data'}
+                    </span>
+                  </div>
+
+                  {/* 3 Dropdown: Tỉnh / Quận / Phường */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                        {lang === 'vi' ? 'Tỉnh / Thành Phố' : 'Province / City'} <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={selectedProvinceCode}
+                        onChange={handleUserProvinceChange}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition cursor-pointer"
+                      >
+                        <option value="">
+                          {isLoadingUserProvinces
+                            ? (lang === 'vi' ? 'Đang tải tỉnh/thành...' : 'Loading provinces...')
+                            : `-- ${lang === 'vi' ? 'Chọn Tỉnh / Thành' : 'Select Province'} --`}
+                        </option>
+                        {userProvinces.map((p) => (
+                          <option key={p.code} value={p.code}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                        {lang === 'vi' ? 'Quận / Huyện' : 'District'} <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={selectedDistrictCode}
+                        onChange={handleUserDistrictChange}
+                        disabled={!selectedProvinceCode || isLoadingUserDistricts}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition cursor-pointer disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      >
+                        <option value="">
+                          {isLoadingUserDistricts
+                            ? (lang === 'vi' ? 'Đang tải quận/huyện...' : 'Loading districts...')
+                            : !selectedProvinceCode
+                              ? (lang === 'vi' ? '-- Chọn tỉnh trước --' : '-- Select province first --')
+                              : `-- ${lang === 'vi' ? 'Chọn Quận / Huyện' : 'Select District'} --`}
+                        </option>
+                        {userDistricts.map((d) => (
+                          <option key={d.code} value={d.code}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                        {lang === 'vi' ? 'Phường / Xã' : 'Ward / Commune'} <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={selectedWardCode}
+                        onChange={handleUserWardChange}
+                        disabled={!selectedDistrictCode || isLoadingUserWards}
+                        className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition cursor-pointer disabled:bg-slate-100 disabled:cursor-not-allowed"
+                      >
+                        <option value="">
+                          {isLoadingUserWards
+                            ? (lang === 'vi' ? 'Đang tải phường/xã...' : 'Loading wards...')
+                            : !selectedDistrictCode
+                              ? (lang === 'vi' ? '-- Chọn quận trước --' : '-- Select district first --')
+                              : `-- ${lang === 'vi' ? 'Chọn Phường / Xã' : 'Select Ward'} --`}
+                        </option>
+                        {userWards.map((w) => (
+                          <option key={w.code} value={w.code}>
+                            {w.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Input Text: Số nhà, tên đường chi tiết */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                      {lang === 'vi' ? 'Số nhà, tên đường, ngõ ngách chi tiết' : 'Street address / House number'}
+                    </label>
                     <input
                       type="text"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      required
-                      placeholder="0912 345 678"
-                      className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition shadow-2xs"
+                      value={userStreetAddress}
+                      onChange={handleUserStreetAddressChange}
+                      placeholder={lang === 'vi' ? 'Ví dụ: Số 202, Đường số 8, Khu phố 6' : 'e.g. 202 Street 8'}
+                      className="w-full px-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition shadow-2xs"
                     />
                   </div>
-                </div>
 
-                <div>
-                  <label className="text-xs font-bold text-slate-700 mb-1.5 block">
-                    {lang === 'vi' ? 'Ngày Sinh' : 'Date of Birth'}
-                  </label>
-                  <div className="relative">
-                    <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="date"
-                      value={birthday}
-                      onChange={(e) => setBirthday(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition shadow-2xs"
-                    />
-                  </div>
+                  {/* Xem trước địa chỉ hoàn chỉnh */}
+                  {(computeFullAddress() || address) && (
+                    <div className="p-2.5 bg-white/80 rounded-xl border border-orange-200/60 flex items-start gap-2 text-xs">
+                      <MapPin className="w-3.5 h-3.5 text-[#c34c36] shrink-0 mt-0.5" />
+                      <div className="text-slate-700">
+                        <span className="font-bold text-slate-800">{lang === 'vi' ? 'Địa chỉ đầy đủ: ' : 'Full Address: '}</span>
+                        <span>{computeFullAddress() || address}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 mb-1.5 block">
-                  {lang === 'vi' ? 'Giới Tính' : 'Gender'}
-                </label>
-                <div className="grid grid-cols-3 gap-2.5 max-w-sm">
-                  {(['male', 'female', 'other'] as const).map((g) => {
-                    const isSelected = gender === g;
-                    const labels = {
-                      male: lang === 'vi' ? 'Nam' : 'Male',
-                      female: lang === 'vi' ? 'Nữ' : 'Female',
-                      other: lang === 'vi' ? 'Khác' : 'Other',
-                    };
-                    return (
-                      <button
-                        key={g}
-                        type="button"
-                        onClick={() => setGender(g)}
-                        className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-2 ${
-                          isSelected
-                            ? 'bg-[#c34c36]/10 border-[#c34c36] text-[#c34c36] shadow-2xs font-black'
-                            : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-[#c34c36]' : 'bg-slate-300'}`} />
-                        <span>{labels[g]}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-700 mb-1.5 block">
-                  {lang === 'vi' ? 'Địa Chỉ Cư Trú / Nhận Hàng' : 'Residential / Delivery Address'}
-                </label>
-                <div className="relative">
-                  <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                  <textarea
-                    rows={2}
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder={lang === 'vi' ? 'Nhập địa chỉ chi tiết (số nhà, tên đường, phường/xã, quận/huyện...)' : 'Enter detailed address'}
-                    className="w-full pl-9 pr-3 py-2.5 text-xs sm:text-sm rounded-xl border border-slate-200 bg-white font-medium text-slate-800 focus:outline-none focus:border-[#c34c36] focus:ring-2 focus:ring-[#c34c36]/15 transition shadow-2xs resize-none"
-                  />
-                </div>
-              </div>
+              )}
 
 
 
@@ -1626,852 +1997,850 @@ export const ProfileDialog: React.FC<ProfileDialogProps> = ({
                 </button>
               </div>
             ) : (
-            <div className="space-y-5">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    {lang === 'vi' ? 'Đăng Ký Thành Người Bán (Seller Center)' : 'Seller Registration & Hub Onboarding'}
-                  </h4>
-                  <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-50 text-[#24263e] border border-rose-200">
-                    {currentUser.role === 'seller' || isSellerRegistered
-                      ? (lang === 'vi' ? 'Đã Kích Hoạt Người Bán' : 'Seller Active')
-                      : (lang === 'vi' ? 'Chưa Kích Hoạt' : 'Not Registered')}
-                  </span>
+              <div className="space-y-5">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      {lang === 'vi' ? 'Đăng Ký Thành Người Bán (Seller Center)' : 'Seller Registration & Hub Onboarding'}
+                    </h4>
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-50 text-[#24263e] border border-rose-200">
+                      {currentUser.role === 'seller' || isSellerRegistered
+                        ? (lang === 'vi' ? 'Đã Kích Hoạt Người Bán' : 'Seller Active')
+                        : (lang === 'vi' ? 'Chưa Kích Hoạt' : 'Not Registered')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    {lang === 'vi'
+                      ? 'Đăng ký thông tin gian hàng và địa chỉ kho lấy hàng để bắt đầu đăng bán thiết bị, bưu tá đến tận nơi nhận hàng giao Hub kiểm định 48 bước và nhận tiền bảo lãnh qua Escrow.'
+                      : 'Register your store profile and warehouse pickup location to start listing appliances, with doorstep courier pickup for 48-point Hub inspection and secure Escrow payouts.'}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500">
-                  {lang === 'vi'
-                    ? 'Đăng ký thông tin gian hàng và địa chỉ kho lấy hàng để bắt đầu đăng bán thiết bị, bưu tá đến tận nơi nhận hàng giao Hub kiểm định 48 bước và nhận tiền bảo lãnh qua Escrow.'
-                    : 'Register your store profile and warehouse pickup location to start listing appliances, with doorstep courier pickup for 48-point Hub inspection and secure Escrow payouts.'}
-                </p>
-              </div>
 
-              {/* Success Notification */}
-              {sellerFormSuccess && (
-                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2.5 animate-in fade-in">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{sellerFormSuccess}</span>
-                </div>
-              )}
+                {/* Success Notification */}
+                {sellerFormSuccess && (
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2.5 animate-in fade-in">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{sellerFormSuccess}</span>
+                  </div>
+                )}
 
-              {/* THÔNG TIN GIAN HÀNG ĐÃ ĐĂNG KÝ (HIỂN THỊ KHI ĐÃ LÀ SELLER HOẶC ĐÃ ĐĂNG KÝ) */}
-              {isSellerRegistered && !showSellerRegistrationForm && (
-                <div className="p-4 rounded-2xl bg-slate-50 border border-gray-200 space-y-3 animate-in fade-in">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Store className="w-4 h-4 text-[#24263e]" />
-                      <span className="text-xs font-bold text-slate-900">
-                        {lang === 'vi' ? 'Hồ Sơ Gian Hàng Người Bán Của Bạn' : 'Your Seller Store Profile'}
-                      </span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        currentUser.role === 'seller' || currentUser.kycStatus === 'verified' || existingVerification?.status === 'APPROVED'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : isRejected
-                            ? 'bg-rose-100 text-rose-800'
-                            : isResubmitRequired
-                              ? 'bg-orange-100 text-orange-800'
-                              : 'bg-amber-100 text-amber-800 border border-amber-200'
-                      }`}>
-                        {currentUser.kycStatus === 'pending'
-                          ? (lang === 'vi' ? 'Đang Chờ Quản Trị Viên Duyệt' : 'Pending Review')
-                          : (currentUser.role === 'seller' || currentUser.kycStatus === 'verified')
-                          ? (lang === 'vi' ? 'Đã Kích Hoạt' : 'Active')
-                          : isRejected
-                            ? (lang === 'vi' ? 'Đã Bị Từ Chối' : 'Rejected')
-                            : isResubmitRequired
-                              ? (lang === 'vi' ? 'Yêu Cầu Nộp Lại' : 'Resubmit Required')
-                              : (lang === 'vi' ? 'Đang Chờ Quản Trị Viên Duyệt' : 'Pending Review')}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {currentUser.role === 'seller' && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onRoleChange('buyer');
-                            onUpdateProfile({ ...currentUser, role: 'buyer' });
-                            setSellerFormSuccess(
-                              lang === 'vi'
-                                ? 'Đã chuyển sang vai trò Người Mua (Buyer).'
-                                : 'Switched to Buyer role.'
-                            );
-                            setTimeout(() => setSellerFormSuccess(null), 3000);
-                          }}
-                          className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
-                        >
-                          {lang === 'vi' ? 'Chuyển về Người Mua' : 'Switch to Buyer'}
-                        </button>
-                      )}
-                      {!isPendingReview && (
-                        <button
-                          type="button"
-                          onClick={() => setShowSellerRegistrationForm(true)}
-                          className="inline-flex items-center gap-1 text-xs font-bold text-[#24263e] hover:underline cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>
-                            {isResubmitRequired
-                              ? (lang === 'vi' ? 'Cập nhật & Nộp lại' : 'Update & Resubmit')
+                {/* THÔNG TIN GIAN HÀNG ĐÃ ĐĂNG KÝ (HIỂN THỊ KHI ĐÃ LÀ SELLER HOẶC ĐÃ ĐĂNG KÝ) */}
+                {isSellerRegistered && !showSellerRegistrationForm && (
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-gray-200 space-y-3 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Store className="w-4 h-4 text-[#24263e]" />
+                        <span className="text-xs font-bold text-slate-900">
+                          {lang === 'vi' ? 'Hồ Sơ Gian Hàng Người Bán Của Bạn' : 'Your Seller Store Profile'}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${currentUser.role === 'seller' || currentUser.kycStatus === 'verified' || existingVerification?.status === 'APPROVED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : isRejected
+                              ? 'bg-rose-100 text-rose-800'
+                              : isResubmitRequired
+                                ? 'bg-orange-100 text-orange-800'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                          }`}>
+                          {currentUser.kycStatus === 'pending'
+                            ? (lang === 'vi' ? 'Đang Chờ Quản Trị Viên Duyệt' : 'Pending Review')
+                            : (currentUser.role === 'seller' || currentUser.kycStatus === 'verified')
+                              ? (lang === 'vi' ? 'Đã Kích Hoạt' : 'Active')
                               : isRejected
-                                ? (lang === 'vi' ? 'Đăng ký lại hồ sơ mới' : 'Reapply')
-                                : (lang === 'vi' ? 'Chỉnh sửa thông tin' : 'Edit Information')}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                    <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
-                      <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Tên gian hàng' : 'Store name'}</span>
-                      <span className="font-bold text-slate-800">{shopName || (lang === 'vi' ? 'Gian Hàng SecondLife' : 'SecondLife Store')}</span>
-                    </div>
-                    <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
-                      <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Hotline bán hàng & Zalo' : 'Sales hotline & Zalo'}</span>
-                      <span className="font-bold text-slate-800">
-                        {sellerPhone || phone || (
-                          <span className="text-slate-400 italic font-normal">{lang === 'vi' ? 'Chưa cập nhật' : 'Not updated'}</span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="p-2.5 bg-white rounded-xl border border-gray-200/80 sm:col-span-2">
-                      <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Địa chỉ kho bưu tá lấy hàng' : 'Courier pickup warehouse address'}</span>
-                      <span className="font-medium text-slate-800">
-                        {pickupAddress || address || (
-                          <span className="text-slate-400 italic">{lang === 'vi' ? 'Chưa cập nhật địa chỉ kho (Bấm Chỉnh sửa thông tin bên trên để thêm)' : 'Not updated'}</span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
-                      <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Số CCCD định danh' : 'Citizen ID number'}</span>
-                      <span className="font-bold text-slate-800">{idCardNumber || '048299102941'}</span>
-                    </div>
-                    <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
-                      <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Tài khoản nhận tiền Escrow' : 'Escrow payout account'}</span>
-                      <span className="font-bold text-slate-800">{sellerBankName} - {sellerAccountNumber}</span>
-                    </div>
-                  </div>
-
-                  {/* Status explanation */}
-                  <div className="text-xs space-y-2 pt-1">
-                    {currentUser.role === 'seller' || existingVerification?.status === 'APPROVED' ? (
-                      <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 flex items-center justify-between gap-3">
-                        <div>
-                          <span className="font-bold block text-emerald-800">{lang === 'vi' ? 'Tài khoản người bán đã kích hoạt!' : 'Seller account is active!'}</span>
-                          <span className="text-[11px] text-slate-600">{lang === 'vi' ? 'Bạn có thể tiến hành đăng tin bán thiết bị gia dụng ngay.' : 'You can post your appliance listings now.'}</span>
-                        </div>
+                                ? (lang === 'vi' ? 'Đã Bị Từ Chối' : 'Rejected')
+                                : isResubmitRequired
+                                  ? (lang === 'vi' ? 'Yêu Cầu Nộp Lại' : 'Resubmit Required')
+                                  : (lang === 'vi' ? 'Đang Chờ Quản Trị Viên Duyệt' : 'Pending Review')}
+                        </span>
                       </div>
-                    ) : isResubmitRequired ? (
-                      <div className="p-3.5 rounded-2xl bg-orange-50 border border-orange-300 text-orange-950 space-y-2">
-                        <div className="flex items-center gap-2 font-bold text-orange-800">
-                          <AlertCircle className="w-4 h-4 text-orange-600 shrink-0" />
-                          <span>{lang === 'vi' ? 'Nhân viên yêu cầu nộp lại chứng từ eKYC:' : 'Staff requested document resubmission:'}</span>
-                        </div>
-                        <p className="text-[11px] leading-relaxed pl-6 text-slate-800 font-medium">
-                          {existingVerification?.rejectionReason || (lang === 'vi' ? 'Ảnh chứng từ chưa rõ nét hoặc thông tin cần bổ sung. Vui lòng chụp lại và gửi lại yêu cầu.' : 'Please retake clearer photos and resubmit.')}
-                        </p>
-                        <div className="pt-1 pl-6">
+                      <div className="flex items-center gap-3">
+                        {currentUser.role === 'seller' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onRoleChange('buyer');
+                              onUpdateProfile({ ...currentUser, role: 'buyer' });
+                              setSellerFormSuccess(
+                                lang === 'vi'
+                                  ? 'Đã chuyển sang vai trò Người Mua (Buyer).'
+                                  : 'Switched to Buyer role.'
+                              );
+                              setTimeout(() => setSellerFormSuccess(null), 3000);
+                            }}
+                            className="text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                          >
+                            {lang === 'vi' ? 'Chuyển về Người Mua' : 'Switch to Buyer'}
+                          </button>
+                        )}
+                        {!isPendingReview && (
                           <button
                             type="button"
                             onClick={() => setShowSellerRegistrationForm(true)}
-                            className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-xs transition cursor-pointer shadow-xs"
+                            className="inline-flex items-center gap-1 text-xs font-bold text-[#24263e] hover:underline cursor-pointer"
                           >
-                            {lang === 'vi' ? 'Cập Nhật Ảnh & Nộp Lại Ngay' : 'Update & Resubmit Now'}
-                          </button>
-                        </div>
-                      </div>
-                    ) : isRejected ? (
-                      <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 space-y-2">
-                        <div className="flex items-center gap-2 font-bold text-rose-800">
-                          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                          <span>{lang === 'vi' ? 'Hồ sơ người bán đã bị từ chối:' : 'Seller application was rejected:'}</span>
-                        </div>
-                        <p className="text-[11px] leading-relaxed pl-6 text-slate-800 font-medium">
-                          {existingVerification?.rejectionReason || (lang === 'vi' ? 'Hồ sơ không đáp ứng điều kiện định danh của SecondLife.' : 'Application does not meet identification criteria.')}
-                        </p>
-                        <div className="pt-1 pl-6">
-                          <button
-                            type="button"
-                            onClick={() => setShowSellerRegistrationForm(true)}
-                            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs transition cursor-pointer shadow-xs"
-                          >
-                            {lang === 'vi' ? 'Đăng Ký Lại Hồ Sơ Mới' : 'Reapply With New Details'}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 text-amber-900 space-y-1.5">
-                        <div className="flex items-center gap-2 font-bold text-amber-800">
-                          <Clock className="w-4 h-4 text-amber-600 shrink-0 animate-spin" />
-                          <span>{lang === 'vi' ? 'Đang Chờ Phê Duyệt Hồ Sơ eKYC' : 'Awaiting eKYC Approval'}</span>
-                        </div>
-                        <p className="text-[11px] leading-relaxed text-slate-700 pl-6">
-                          {lang === 'vi'
-                            ? 'Hồ sơ của bạn đang được Ban Quản trị SecondLife đối soát CCCD và địa chỉ kho. Vui lòng chờ phê duyệt trong 24 giờ làm việc. Trong thời gian này, bạn không thể chỉnh sửa hoặc gửi lại yêu cầu.'
-                            : 'Your profile is awaiting review by SecondLife administrators. Please wait for approval within 24 working hours. You cannot edit or resubmit during this time.'}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* FORM ĐĂNG KÝ CHUYỂN TÀI KHOẢN NGƯỜI BÁN */}
-              {(showSellerRegistrationForm || (!isSellerRegistered && currentUser.role !== 'seller')) && !isPendingReview && (
-                <form
-                  onSubmit={handleRegisterSeller}
-                  className="p-4 sm:p-5 rounded-3xl bg-gradient-to-b from-white to-slate-50 border-2 border-[#c34c36]/30 shadow-md space-y-4 animate-in fade-in"
-                >
-                  <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-xl bg-gradient-to-r from-[#c34c36] to-[#fce5da] text-white">
-                        <Store className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-black text-slate-900 uppercase tracking-wide">
-                          {isSellerRegistered
-                            ? (lang === 'vi' ? 'Cập Nhật Thông Tin Gian Hàng' : 'Update Store Information')
-                            : (lang === 'vi' ? 'Đơn Đăng Ký Chuyển Tài Khoản Người Bán' : 'Seller Registration Form')}
-                        </h5>
-                        <p className="text-[11px] text-slate-500">
-                          {lang === 'vi'
-                            ? 'Điền thông tin để Kỹ sư Hub và đơn vị vận chuyển (GHTK/GHN) đến nhận thiết bị giám định'
-                            : 'Fill in details so Hub inspectors and couriers (GHTK/GHN) can collect devices for inspection'}
-                        </p>
-                      </div>
-                    </div>
-                    {isSellerRegistered && (
-                      <button
-                        type="button"
-                        onClick={() => setShowSellerRegistrationForm(false)}
-                        className="text-xs text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
-                      >
-                        {lang === 'vi' ? 'Đóng' : 'Close'}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Highlights Banner */}
-                  <div className="grid grid-cols-3 gap-2 py-1 text-[11px]">
-                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-rose-50/60 border border-rose-100 text-slate-700">
-                      <ShieldCheck className="w-3.5 h-3.5 text-[#24263e] shrink-0" />
-                      <span>{lang === 'vi' ? 'Xác minh CCCD' : 'National ID'}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-amber-50/60 border border-amber-100 text-slate-700">
-                      <Truck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>{lang === 'vi' ? 'Lấy hàng tận kho' : 'Doorstep Pickup'}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 p-2 rounded-xl bg-emerald-50/60 border border-emerald-100 text-slate-700">
-                      <Wallet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>{lang === 'vi' ? 'Giải ngân Escrow' : 'Escrow Payout'}</span>
-                    </div>
-                  </div>
-
-                  {sellerFormError && (
-                    <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      <span>{sellerFormError}</span>
-                    </div>
-                  )}
-
-                  {/* Inputs */}
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                          {lang === 'vi' ? 'Tên Gian Hàng / Cửa Hàng' : 'Store / Shop Name'} <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={shopName}
-                          onChange={(e) => setShopName(e.target.value)}
-                          placeholder={lang === 'vi' ? 'VD: Điện Máy Cũ Hoàng Khang' : 'e.g., Hoang Khang Pre-owned Tech'}
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                          {lang === 'vi' ? 'Số Điện Thoại Kinh Doanh & Zalo' : 'Business Phone & Zalo'} <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={sellerPhone}
-                          onChange={(e) => setSellerPhone(e.target.value)}
-                          placeholder="0912 345 678"
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Email Gian Hàng & Xác Thực Mã OTP Trước Khi eKYC */}
-                    <div className="p-3.5 bg-gradient-to-br from-[#faf8f5] to-orange-50/20 border border-slate-200 rounded-2xl space-y-2.5">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
-                          <Mail className="w-3.5 h-3.5 text-[#c34c36]" />
-                          <span>{lang === 'vi' ? 'Email Gian Hàng (Bắt buộc xác thực OTP trước khi eKYC)' : 'Shop Email (OTP Verification Required)'}</span>
-                          <span className="text-red-500">*</span>
-                        </label>
-                        {isShopEmailVerified ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                            <span>{lang === 'vi' ? 'Đã xác thực OTP' : 'Verified'}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-full border border-amber-300">
-                            <AlertCircle className="w-3 h-3 text-amber-600" />
-                            <span>{lang === 'vi' ? 'Chưa xác thực email' : 'Unverified'}</span>
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        <input
-                          type="email"
-                          required
-                          value={shopEmail}
-                          onChange={(e) => {
-                            setShopEmail(e.target.value);
-                            setIsShopEmailVerified(false);
-                            setShopOtpSuccess(null);
-                            setShopOtpError(null);
-                          }}
-                          placeholder="seller@example.com"
-                          className="flex-1 px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={handleSendShopOtp}
-                          disabled={isSendingShopOtp || shopOtpCountdown > 0 || isShopEmailVerified}
-                          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer ${
-                            isShopEmailVerified
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
-                              : 'bg-[#24263e] hover:bg-black text-white disabled:opacity-50'
-                          }`}
-                        >
-                          {isSendingShopOtp ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>{lang === 'vi' ? 'Đang gửi...' : 'Sending...'}</span>
-                            </>
-                          ) : shopOtpCountdown > 0 ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              <span>{lang === 'vi' ? `Gửi lại (${shopOtpCountdown}s)` : `Resend (${shopOtpCountdown}s)`}</span>
-                            </>
-                          ) : isShopEmailVerified ? (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>{lang === 'vi' ? 'Đã Xác Thực' : 'Verified'}</span>
-                            </>
-                          ) : (
-                            <>
-                              <Mail className="w-3.5 h-3.5" />
-                              <span>{hasSentShopOtp ? (lang === 'vi' ? 'Gửi lại OTP' : 'Resend OTP') : (lang === 'vi' ? 'Gửi mã OTP' : 'Send OTP')}</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-
-                      {/* Inline OTP input when not yet verified */}
-                      {!isShopEmailVerified && hasSentShopOtp && (
-                        <div className="p-3 bg-white rounded-xl border border-amber-200 space-y-2 animate-in fade-in">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-bold text-slate-700">
-                              {lang === 'vi' ? 'Nhập mã xác thực OTP 6 số đã nhận qua email:' : 'Enter 6-digit OTP code:'}
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>
+                              {isResubmitRequired
+                                ? (lang === 'vi' ? 'Cập nhật & Nộp lại' : 'Update & Resubmit')
+                                : isRejected
+                                  ? (lang === 'vi' ? 'Đăng ký lại hồ sơ mới' : 'Reapply')
+                                  : (lang === 'vi' ? 'Chỉnh sửa thông tin' : 'Edit Information')}
                             </span>
-                            {shopOtpCountdown > 0 && (
-                              <span className="text-[10px] text-slate-400">
-                                {lang === 'vi' ? `Thời gian: ${shopOtpCountdown}s` : `${shopOtpCountdown}s remaining`}
-                              </span>
-                            )}
-                          </div>
+                          </button>
+                        )}
+                      </div>
+                    </div>
 
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              maxLength={6}
-                              value={shopOtpCode}
-                              onChange={(e) => setShopOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                              placeholder="Ví dụ: 123456"
-                              className="flex-1 px-3 py-2 rounded-xl border border-gray-300 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs font-mono tracking-widest text-slate-900 bg-slate-50"
-                            />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                      <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
+                        <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Tên gian hàng' : 'Store name'}</span>
+                        <span className="font-bold text-slate-800">{shopName || (lang === 'vi' ? 'Gian Hàng SecondLife' : 'SecondLife Store')}</span>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
+                        <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Hotline bán hàng & Zalo' : 'Sales hotline & Zalo'}</span>
+                        <span className="font-bold text-slate-800">
+                          {sellerPhone || phone || (
+                            <span className="text-slate-400 italic font-normal">{lang === 'vi' ? 'Chưa cập nhật' : 'Not updated'}</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-xl border border-gray-200/80 sm:col-span-2">
+                        <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Địa chỉ kho bưu tá lấy hàng' : 'Courier pickup warehouse address'}</span>
+                        <span className="font-medium text-slate-800">
+                          {pickupAddress || address || (
+                            <span className="text-slate-400 italic">{lang === 'vi' ? 'Chưa cập nhật địa chỉ kho (Bấm Chỉnh sửa thông tin bên trên để thêm)' : 'Not updated'}</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
+                        <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Số CCCD định danh' : 'Citizen ID number'}</span>
+                        <span className="font-bold text-slate-800">{idCardNumber || '048299102941'}</span>
+                      </div>
+                      <div className="p-2.5 bg-white rounded-xl border border-gray-200/80">
+                        <span className="text-[10px] text-slate-400 block mb-0.5">{lang === 'vi' ? 'Tài khoản nhận tiền Escrow' : 'Escrow payout account'}</span>
+                        <span className="font-bold text-slate-800">{sellerBankName} - {sellerAccountNumber}</span>
+                      </div>
+                    </div>
+
+                    {/* Status explanation */}
+                    <div className="text-xs space-y-2 pt-1">
+                      {currentUser.role === 'seller' || existingVerification?.status === 'APPROVED' ? (
+                        <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 flex items-center justify-between gap-3">
+                          <div>
+                            <span className="font-bold block text-emerald-800">{lang === 'vi' ? 'Tài khoản người bán đã kích hoạt!' : 'Seller account is active!'}</span>
+                            <span className="text-[11px] text-slate-600">{lang === 'vi' ? 'Bạn có thể tiến hành đăng tin bán thiết bị gia dụng ngay.' : 'You can post your appliance listings now.'}</span>
+                          </div>
+                        </div>
+                      ) : isResubmitRequired ? (
+                        <div className="p-3.5 rounded-2xl bg-orange-50 border border-orange-300 text-orange-950 space-y-2">
+                          <div className="flex items-center gap-2 font-bold text-orange-800">
+                            <AlertCircle className="w-4 h-4 text-orange-600 shrink-0" />
+                            <span>{lang === 'vi' ? 'Nhân viên yêu cầu nộp lại chứng từ eKYC:' : 'Staff requested document resubmission:'}</span>
+                          </div>
+                          <p className="text-[11px] leading-relaxed pl-6 text-slate-800 font-medium">
+                            {existingVerification?.rejectionReason || (lang === 'vi' ? 'Ảnh chứng từ chưa rõ nét hoặc thông tin cần bổ sung. Vui lòng chụp lại và gửi lại yêu cầu.' : 'Please retake clearer photos and resubmit.')}
+                          </p>
+                          <div className="pt-1 pl-6">
                             <button
                               type="button"
-                              onClick={handleVerifyShopOtp}
-                              disabled={isVerifyingShopOtp || shopOtpCode.length !== 6}
-                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                              onClick={() => setShowSellerRegistrationForm(true)}
+                              className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-xl font-bold text-xs transition cursor-pointer shadow-xs"
                             >
-                              {isVerifyingShopOtp ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                              )}
-                              <span>{lang === 'vi' ? 'Xác Nhận OTP' : 'Verify OTP'}</span>
+                              {lang === 'vi' ? 'Cập Nhật Ảnh & Nộp Lại Ngay' : 'Update & Resubmit Now'}
                             </button>
                           </div>
-
-                          {shopOtpError && (
-                            <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1">
-                              <AlertCircle className="w-3 h-3 shrink-0" />
-                              <span>{shopOtpError}</span>
-                            </p>
-                          )}
-                          {shopOtpSuccess && (
-                            <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3 shrink-0" />
-                              <span>{shopOtpSuccess}</span>
-                            </p>
-                          )}
                         </div>
-                      )}
-
-                      {isShopEmailVerified && (
-                        <div className="p-2 rounded-xl bg-emerald-50 text-emerald-800 text-[11px] font-medium flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>{lang === 'vi' ? 'Email gian hàng đã được xác thực thành công. Bạn đủ điều kiện thực hiện eKYC.' : 'Shop email verified. You may proceed with eKYC.'}</span>
+                      ) : isRejected ? (
+                        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-950 space-y-2">
+                          <div className="flex items-center gap-2 font-bold text-rose-800">
+                            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                            <span>{lang === 'vi' ? 'Hồ sơ người bán đã bị từ chối:' : 'Seller application was rejected:'}</span>
+                          </div>
+                          <p className="text-[11px] leading-relaxed pl-6 text-slate-800 font-medium">
+                            {existingVerification?.rejectionReason || (lang === 'vi' ? 'Hồ sơ không đáp ứng điều kiện định danh của SecondLife.' : 'Application does not meet identification criteria.')}
+                          </p>
+                          <div className="pt-1 pl-6">
+                            <button
+                              type="button"
+                              onClick={() => setShowSellerRegistrationForm(true)}
+                              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs transition cursor-pointer shadow-xs"
+                            >
+                              {lang === 'vi' ? 'Đăng Ký Lại Hồ Sơ Mới' : 'Reapply With New Details'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200 text-amber-900 space-y-1.5">
+                          <div className="flex items-center gap-2 font-bold text-amber-800">
+                            <Clock className="w-4 h-4 text-amber-600 shrink-0 animate-spin" />
+                            <span>{lang === 'vi' ? 'Đang Chờ Phê Duyệt Hồ Sơ eKYC' : 'Awaiting eKYC Approval'}</span>
+                          </div>
+                          <p className="text-[11px] leading-relaxed text-slate-700 pl-6">
+                            {lang === 'vi'
+                              ? 'Hồ sơ của bạn đang được Ban Quản trị SecondLife đối soát CCCD và địa chỉ kho. Vui lòng chờ phê duyệt trong 24 giờ làm việc. Trong thời gian này, bạn không thể chỉnh sửa hoặc gửi lại yêu cầu.'
+                              : 'Your profile is awaiting review by SecondLife administrators. Please wait for approval within 24 working hours. You cannot edit or resubmit during this time.'}
+                          </p>
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
 
-                    {/* Warehouse Pickup Address Section - Powered by BE API */}
-                    <div className="space-y-2.5 p-3.5 bg-gradient-to-br from-[#faf8f5] to-orange-50/20 rounded-2xl border border-gray-200">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
-                          <MapPin className="w-3.5 h-3.5 text-[#c34c36]" />
-                          <span>{lang === 'vi' ? 'Địa Chỉ Kho / Nơi Bưu Tá Đến Lấy Hàng Giao Hub' : 'Warehouse / Pickup Location for Hub'}</span>
-                          <span className="text-red-500">*</span>
-                        </label>
+                {/* FORM ĐĂNG KÝ CHUYỂN TÀI KHOẢN NGƯỜI BÁN */}
+                {(showSellerRegistrationForm || (!isSellerRegistered && currentUser.role !== 'seller')) && !isPendingReview && (
+                  <form
+                    onSubmit={handleRegisterSeller}
+                    className="p-4 sm:p-5 rounded-3xl bg-gradient-to-b from-white to-slate-50 border-2 border-[#c34c36]/30 shadow-md space-y-4 animate-in fade-in"
+                  >
+                    <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded-xl bg-gradient-to-r from-[#c34c36] to-[#fce5da] text-white">
+                          <Store className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h5 className="text-xs font-black text-slate-900 uppercase tracking-wide">
+                            {isSellerRegistered
+                              ? (lang === 'vi' ? 'Cập Nhật Thông Tin Gian Hàng' : 'Update Store Information')
+                              : (lang === 'vi' ? 'Đơn Đăng Ký Chuyển Tài Khoản Người Bán' : 'Seller Registration Form')}
+                          </h5>
+                          <p className="text-[11px] text-slate-500">
+                            {lang === 'vi'
+                              ? 'Điền thông tin để Kỹ sư Hub và đơn vị vận chuyển (GHTK/GHN) đến nhận thiết bị giám định'
+                              : 'Fill in details so Hub inspectors and couriers (GHTK/GHN) can collect devices for inspection'}
+                          </p>
+                        </div>
+                      </div>
+                      {isSellerRegistered && (
+                        <button
+                          type="button"
+                          onClick={() => setShowSellerRegistrationForm(false)}
+                          className="text-xs text-slate-400 hover:text-slate-600 font-bold cursor-pointer"
+                        >
+                          {lang === 'vi' ? 'Đóng' : 'Close'}
+                        </button>
+                      )}
+                    </div>
 
-                        <div className="flex items-center gap-1.5 sm:gap-2">
-                          {/* Live GPS Geolocation Button */}
+                    {/* Highlights Banner */}
+                    <div className="grid grid-cols-3 gap-2 py-1 text-[11px]">
+                      <div className="flex items-center gap-1.5 p-2 rounded-xl bg-rose-50/60 border border-rose-100 text-slate-700">
+                        <ShieldCheck className="w-3.5 h-3.5 text-[#24263e] shrink-0" />
+                        <span>{lang === 'vi' ? 'Xác minh CCCD' : 'National ID'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 p-2 rounded-xl bg-amber-50/60 border border-amber-100 text-slate-700">
+                        <Truck className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>{lang === 'vi' ? 'Lấy hàng tận kho' : 'Doorstep Pickup'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 p-2 rounded-xl bg-emerald-50/60 border border-emerald-100 text-slate-700">
+                        <Wallet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>{lang === 'vi' ? 'Giải ngân Escrow' : 'Escrow Payout'}</span>
+                      </div>
+                    </div>
+
+                    {sellerFormError && (
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span>{sellerFormError}</span>
+                      </div>
+                    )}
+
+                    {/* Inputs */}
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                            {lang === 'vi' ? 'Tên Gian Hàng / Cửa Hàng' : 'Store / Shop Name'} <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={shopName}
+                            onChange={(e) => setShopName(e.target.value)}
+                            placeholder={lang === 'vi' ? 'VD: Điện Máy Cũ Hoàng Khang' : 'e.g., Hoang Khang Pre-owned Tech'}
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                            {lang === 'vi' ? 'Số Điện Thoại Kinh Doanh & Zalo' : 'Business Phone & Zalo'} <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={sellerPhone}
+                            onChange={(e) => setSellerPhone(e.target.value)}
+                            placeholder="0912 345 678"
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Email Gian Hàng & Xác Thực Mã OTP Trước Khi eKYC */}
+                      <div className="p-3.5 bg-gradient-to-br from-[#faf8f5] to-orange-50/20 border border-slate-200 rounded-2xl space-y-2.5">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                            <Mail className="w-3.5 h-3.5 text-[#c34c36]" />
+                            <span>{lang === 'vi' ? 'Email Gian Hàng (Bắt buộc xác thực OTP trước khi eKYC)' : 'Shop Email (OTP Verification Required)'}</span>
+                            <span className="text-red-500">*</span>
+                          </label>
+                          {isShopEmailVerified ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>{lang === 'vi' ? 'Đã xác thực OTP' : 'Verified'}</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100/90 px-2 py-0.5 rounded-full border border-amber-300">
+                              <AlertCircle className="w-3 h-3 text-amber-600" />
+                              <span>{lang === 'vi' ? 'Chưa xác thực email' : 'Unverified'}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <input
+                            type="email"
+                            required
+                            value={shopEmail}
+                            onChange={(e) => {
+                              setShopEmail(e.target.value);
+                              setIsShopEmailVerified(false);
+                              setShopOtpSuccess(null);
+                              setShopOtpError(null);
+                            }}
+                            placeholder="seller@example.com"
+                            className="flex-1 px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
+                          />
+
                           <button
                             type="button"
-                            onClick={handleUseCurrentLocation}
-                            disabled={isDetectingLocation}
-                            title={lang === 'vi' ? 'Định vị GPS vị trí hiện tại và tự động điền' : 'Detect current GPS location and auto-fill'}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-2xs cursor-pointer disabled:opacity-50"
+                            onClick={handleSendShopOtp}
+                            disabled={isSendingShopOtp || shopOtpCountdown > 0 || isShopEmailVerified}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shrink-0 cursor-pointer ${isShopEmailVerified
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-default'
+                                : 'bg-[#24263e] hover:bg-black text-white disabled:opacity-50'
+                              }`}
                           >
-                            <LocateFixed className={`w-3 h-3 ${isDetectingLocation ? 'animate-spin' : ''}`} />
-                            <span>
-                              {isDetectingLocation
-                                ? (lang === 'vi' ? 'Đang định vị...' : 'Locating...')
-                                : (lang === 'vi' ? 'Vị trí hiện tại' : 'Current location')}
-                            </span>
+                            {isSendingShopOtp ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>{lang === 'vi' ? 'Đang gửi...' : 'Sending...'}</span>
+                              </>
+                            ) : shopOtpCountdown > 0 ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>{lang === 'vi' ? `Gửi lại (${shopOtpCountdown}s)` : `Resend (${shopOtpCountdown}s)`}</span>
+                              </>
+                            ) : isShopEmailVerified ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>{lang === 'vi' ? 'Đã Xác Thực' : 'Verified'}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Mail className="w-3.5 h-3.5" />
+                                <span>{hasSentShopOtp ? (lang === 'vi' ? 'Gửi lại OTP' : 'Resend OTP') : (lang === 'vi' ? 'Gửi mã OTP' : 'Send OTP')}</span>
+                              </>
+                            )}
                           </button>
-
-                          {/* Call API BE Button */}
-                          <button
-                            type="button"
-                            onClick={() => fetchAddressFromBackend(true)}
-                            disabled={isLoadingAddressFromBe}
-                            title={lang === 'vi' ? 'Gọi API BE để lấy địa chỉ kho đã lưu' : 'Call BE API to get saved warehouse address'}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-lg bg-[#24263e] hover:bg-[#343759] text-white transition shadow-2xs cursor-pointer disabled:opacity-50"
-                          >
-                            <RefreshCw className={`w-3 h-3 ${isLoadingAddressFromBe ? 'animate-spin' : ''}`} />
-                            <span>
-                              {isLoadingAddressFromBe
-                                ? (lang === 'vi' ? 'Đang gọi...' : 'Calling...')
-                                : (lang === 'vi' ? 'Làm mới' : 'Refresh')}
-                            </span>
-                          </button>
                         </div>
+
+                        {/* Inline OTP input when not yet verified */}
+                        {!isShopEmailVerified && hasSentShopOtp && (
+                          <div className="p-3 bg-white rounded-xl border border-amber-200 space-y-2 animate-in fade-in">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="font-bold text-slate-700">
+                                {lang === 'vi' ? 'Nhập mã xác thực OTP 6 số đã nhận qua email:' : 'Enter 6-digit OTP code:'}
+                              </span>
+                              {shopOtpCountdown > 0 && (
+                                <span className="text-[10px] text-slate-400">
+                                  {lang === 'vi' ? `Thời gian: ${shopOtpCountdown}s` : `${shopOtpCountdown}s remaining`}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={6}
+                                value={shopOtpCode}
+                                onChange={(e) => setShopOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                placeholder="Ví dụ: 123456"
+                                className="flex-1 px-3 py-2 rounded-xl border border-gray-300 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs font-mono tracking-widest text-slate-900 bg-slate-50"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleVerifyShopOtp}
+                                disabled={isVerifyingShopOtp || shopOtpCode.length !== 6}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                              >
+                                {isVerifyingShopOtp ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                )}
+                                <span>{lang === 'vi' ? 'Xác Nhận OTP' : 'Verify OTP'}</span>
+                              </button>
+                            </div>
+
+                            {shopOtpError && (
+                              <p className="text-[11px] text-rose-600 font-medium flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3 shrink-0" />
+                                <span>{shopOtpError}</span>
+                              </p>
+                            )}
+                            {shopOtpSuccess && (
+                              <p className="text-[11px] text-emerald-600 font-medium flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 shrink-0" />
+                                <span>{shopOtpSuccess}</span>
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {isShopEmailVerified && (
+                          <div className="p-2 rounded-xl bg-emerald-50 text-emerald-800 text-[11px] font-medium flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>{lang === 'vi' ? 'Email gian hàng đã được xác thực thành công. Bạn đủ điều kiện thực hiện eKYC.' : 'Shop email verified. You may proceed with eKYC.'}</span>
+                          </div>
+                        )}
                       </div>
 
-                      {/* Location Accuracy Tip Banner */}
-                      <div className="text-[10px] text-amber-800 bg-amber-50/90 px-3 py-1.5 rounded-xl border border-amber-200/80 flex items-start gap-1.5 leading-snug">
-                        <span className="shrink-0 font-bold">💡</span>
-                        <span>
-                          {lang === 'vi'
-                            ? 'Lưu ý: Trên máy tính (PC/Laptop), định vị qua IP/Wi-Fi nên có thể lệch so với GPS điện thoại. Bạn có thể tự do bấm chọn lại Tỉnh / Phường hoặc gõ sửa địa chỉ bên dưới.'
-                            : 'Note: On PC/Laptop, location is estimated via IP/Wi-Fi. You can freely re-select Province / Ward or edit the address below.'}
-                        </span>
-                      </div>
-
-                      {/* Cascade selects: Tỉnh / Thành & Phường / Xã từ BE GHN */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                            {lang === 'vi' ? 'Tỉnh / Thành Phố' : 'Province / City'}
+                      {/* Warehouse Pickup Address Section - Powered by BE API */}
+                      <div className="space-y-2.5 p-3.5 bg-gradient-to-br from-[#faf8f5] to-orange-50/20 rounded-2xl border border-gray-200">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-[#c34c36]" />
+                            <span>{lang === 'vi' ? 'Địa Chỉ Kho / Nơi Bưu Tá Đến Lấy Hàng Giao Hub' : 'Warehouse / Pickup Location for Hub'}</span>
+                            <span className="text-red-500">*</span>
                           </label>
-                          <select
-                            value={selectedProvinceId}
-                            onChange={handleProvinceChange}
-                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900 cursor-pointer"
-                          >
-                            <option value="">-- {lang === 'vi' ? 'Chọn Tỉnh / Thành Phố' : 'Select Province'} --</option>
-                            {Array.isArray(provinces) && provinces.map((p, idx) => (
-                              <option key={p._id ? `${p._id}-${idx}` : idx} value={p._id}>
-                                {p.name}
-                              </option>
-                            ))}
-                          </select>
+
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            {/* Live GPS Geolocation Button */}
+                            <button
+                              type="button"
+                              onClick={handleUseCurrentLocation}
+                              disabled={isDetectingLocation}
+                              title={lang === 'vi' ? 'Định vị GPS vị trí hiện tại và tự động điền' : 'Detect current GPS location and auto-fill'}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-2xs cursor-pointer disabled:opacity-50"
+                            >
+                              <LocateFixed className={`w-3 h-3 ${isDetectingLocation ? 'animate-spin' : ''}`} />
+                              <span>
+                                {isDetectingLocation
+                                  ? (lang === 'vi' ? 'Đang định vị...' : 'Locating...')
+                                  : (lang === 'vi' ? 'Vị trí hiện tại' : 'Current location')}
+                              </span>
+                            </button>
+
+                            {/* Call API BE Button */}
+                            <button
+                              type="button"
+                              onClick={() => fetchAddressFromBackend(true)}
+                              disabled={isLoadingAddressFromBe}
+                              title={lang === 'vi' ? 'Gọi API BE để lấy địa chỉ kho đã lưu' : 'Call BE API to get saved warehouse address'}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-lg bg-[#24263e] hover:bg-[#343759] text-white transition shadow-2xs cursor-pointer disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${isLoadingAddressFromBe ? 'animate-spin' : ''}`} />
+                              <span>
+                                {isLoadingAddressFromBe
+                                  ? (lang === 'vi' ? 'Đang gọi...' : 'Calling...')
+                                  : (lang === 'vi' ? 'Làm mới' : 'Refresh')}
+                              </span>
+                            </button>
+                          </div>
                         </div>
 
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                            {lang === 'vi' ? 'Phường / Xã' : 'Ward / Commune'}
-                          </label>
-                          <select
-                            value={selectedWardId}
-                            onChange={handleWardChange}
-                            disabled={!selectedProvinceId || isLoadingWards}
-                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900 disabled:bg-gray-100 disabled:cursor-not-allowed cursor-pointer"
-                          >
-                            <option value="">
-                              {isLoadingWards
-                                ? (lang === 'vi' ? 'Đang tải phường/xã ...' : 'Loading wards...')
-                                : `-- ${lang === 'vi' ? 'Chọn Phường / Xã' : 'Select Ward'} --`}
-                            </option>
-                            {Array.isArray(wards) && wards.map((w, idx) => (
-                              <option key={w._id ? `${w._id}-${idx}` : idx} value={w._id}>
-                                {w.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Detail Street Address */}
-                      <div>
-                        <label className="text-[10px] font-bold text-slate-600 block mb-1">
-                          {lang === 'vi' ? 'Số nhà, ngõ ngách, tên đường chi tiết' : 'Street address / House number'}
-                        </label>
-                        <input
-                          type="text"
-                          value={streetAddress}
-                          onChange={handleStreetAddressChange}
-                          placeholder={lang === 'vi' ? 'VD: Số 123 đường Giải Phóng, Ngõ 4' : 'e.g., 123 Giai Phong St'}
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* Full combined address input */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-[10px] font-bold text-slate-700 block">
-                            {lang === 'vi' ? 'Địa chỉ đầy đủ bưu tá đến lấy (Tự động tổng hợp hoặc tự do sửa)' : 'Full Pickup Address (Auto-synced / Editable)'} <span className="text-red-500">*</span>
-                          </label>
-                          <span className="text-[9px] text-[#c34c36] font-semibold">
-                            {lang === 'vi' ? '✎ Có thể sửa trực tiếp' : '✎ Editable'}
-                          </span>
-                        </div>
-                        <input
-                          type="text"
-                          required
-                          value={pickupAddress}
-                          onChange={(e) => setPickupAddress(e.target.value)}
-                          placeholder={lang === 'vi' ? 'Số nhà, tên đường, phường/xã, tỉnh/thành phố' : 'Street address, ward, city'}
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900 font-medium"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between flex-wrap gap-1 text-[10px] text-slate-500 font-medium">
-                        <span className="flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        {/* Location Accuracy Tip Banner */}
+                        <div className="text-[10px] text-amber-800 bg-amber-50/90 px-3 py-1.5 rounded-xl border border-amber-200/80 flex items-start gap-1.5 leading-snug">
+                          <span className="shrink-0 font-bold">💡</span>
                           <span>
                             {lang === 'vi'
-                              ? 'Địa chỉ xác thực: Bưu tá sẽ đến tận kho nhận thiết bị bàn giao sang Hub kiểm định 48 bước.'
-                              : 'Verified address: Couriers will pick up devices from this address for 48-step Hub inspection.'}
+                              ? 'Lưu ý: Trên máy tính (PC/Laptop), định vị qua IP/Wi-Fi nên có thể lệch so với GPS điện thoại. Bạn có thể tự do bấm chọn lại Tỉnh / Phường hoặc gõ sửa địa chỉ bên dưới.'
+                              : 'Note: On PC/Laptop, location is estimated via IP/Wi-Fi. You can freely re-select Province / Ward or edit the address below.'}
                           </span>
-                        </span>
-                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[9px] font-semibold">
-                          {lang === 'vi' ? '✓ Bạn có thể chỉnh sửa mọi ô trên' : '✓ All fields above are editable'}
-                        </span>
-                      </div>
-                    </div>
+                        </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                          {lang === 'vi' ? 'Số Căn Cước Công Dân (CCCD/CMND)' : 'Citizen Identity Number (CCCD)'} <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={idCardNumber}
-                          onChange={(e) => setIdCardNumber(e.target.value)}
-                          placeholder="048299102941"
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                          {lang === 'vi' ? 'Loại Thiết Bị Bán Chủ Yếu' : 'Primary Product Category'}
-                        </label>
-                        <input
-                          type="text"
-                          value={sellerProductTypes}
-                          onChange={(e) => setSellerProductTypes(e.target.value)}
-                          placeholder={lang === 'vi' ? 'VD: Tủ lạnh, Máy giặt, Máy pha cafe...' : 'e.g., Refrigerators, Washers, Coffee machines...'}
-                          className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
-                        />
-                      </div>
-                    </div>
-
-                    {/* eKYC Document Photo Upload Section */}
-                    <div className="p-3.5 rounded-2xl bg-[#faf8f5] border border-slate-200 space-y-3">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                        <FileCheck className="w-4 h-4 text-[#24263e]" />
-                        <span>{lang === 'vi' ? 'Ảnh Tải Lên Xác Thực eKYC (Mặt Trước, Mặt Sau, Chân Dung)' : 'eKYC Verification Photo Uploads'}</span>
-                        <span className="text-red-500">*</span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {/* Front ID */}
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between h-5">
-                            <label className="text-[10px] font-bold text-slate-700 block truncate">
-                              {lang === 'vi' ? '1. Ảnh CCCD Mặt Trước' : '1. Front ID Card'} <span className="text-red-500">*</span>
+                        {/* Cascade selects: Tỉnh / Thành & Phường / Xã từ BE GHN */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-600 block mb-1">
+                              {lang === 'vi' ? 'Tỉnh / Thành Phố' : 'Province / City'}
                             </label>
-                            <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                              {lang === 'vi' ? 'Mặt trước' : 'Front'}
-                            </span>
+                            <select
+                              value={selectedProvinceId}
+                              onChange={handleProvinceChange}
+                              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900 cursor-pointer"
+                            >
+                              <option value="">-- {lang === 'vi' ? 'Chọn Tỉnh / Thành Phố' : 'Select Province'} --</option>
+                              {Array.isArray(provinces) && provinces.map((p, idx) => (
+                                <option key={p._id ? `${p._id}-${idx}` : idx} value={p._id}>
+                                  {p.name}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                          <div className="relative border border-dashed border-slate-300 hover:border-[#c34c36] rounded-2xl p-2.5 bg-white text-center transition h-[145px] flex flex-col justify-between">
-                            {docFrontUrl ? (
-                              <div className="h-full flex flex-col justify-between">
-                                <div className="relative w-full h-20 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                                  <img src={docFrontUrl} alt="Front ID" className="w-full h-full object-cover" />
-                                  <button
-                                    type="button"
-                                    onClick={() => setDocFrontUrl('')}
-                                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-xs transition z-10 cursor-pointer"
-                                    title={lang === 'vi' ? 'Xóa ảnh' : 'Remove photo'}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                </div>
-                                <div className="flex items-center justify-between px-0.5 text-[10px]">
-                                  <span className="text-emerald-600 font-bold flex items-center gap-1">
-                                    <CheckCircle2 className="w-3 h-3" /> {lang === 'vi' ? 'Đã tải lên' : 'Uploaded'}
-                                  </span>
-                                  <label className="text-[#24263e] hover:text-[#c34c36] font-bold underline cursor-pointer">
-                                    {lang === 'vi' ? 'Đổi ảnh' : 'Change'}
-                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'front')} />
-                                  </label>
-                                </div>
-                              </div>
-                            ) : (
-                              <label className="cursor-pointer flex flex-col items-center justify-center h-full space-y-1.5 hover:bg-slate-50/60 rounded-xl transition">
-                                <Camera className="w-6 h-6 text-slate-400 mx-auto" />
-                                <span className="text-[11px] font-bold text-slate-700 block">
-                                  {uploadingField === 'front' ? (lang === 'vi' ? 'Đang tải lên...' : 'Uploading...') : (lang === 'vi' ? 'Chọn ảnh mặt trước' : 'Select Front Photo')}
-                                </span>
-                                <span className="text-[9px] text-slate-400 block">{lang === 'vi' ? 'Hỗ trợ JPG, PNG, WEBP' : 'JPG, PNG, WEBP'}</span>
-                                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'front')} />
-                              </label>
-                            )}
+
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-600 block mb-1">
+                              {lang === 'vi' ? 'Phường / Xã' : 'Ward / Commune'}
+                            </label>
+                            <select
+                              value={selectedWardId}
+                              onChange={handleWardChange}
+                              disabled={!selectedProvinceId || isLoadingWards}
+                              className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900 disabled:bg-gray-100 disabled:cursor-not-allowed cursor-pointer"
+                            >
+                              <option value="">
+                                {isLoadingWards
+                                  ? (lang === 'vi' ? 'Đang tải phường/xã ...' : 'Loading wards...')
+                                  : `-- ${lang === 'vi' ? 'Chọn Phường / Xã' : 'Select Ward'} --`}
+                              </option>
+                              {Array.isArray(wards) && wards.map((w, idx) => (
+                                <option key={w._id ? `${w._id}-${idx}` : idx} value={w._id}>
+                                  {w.name}
+                                </option>
+                              ))}
+                            </select>
                           </div>
                         </div>
 
-                        {/* Back ID */}
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between h-5">
-                            <label className="text-[10px] font-bold text-slate-700 block truncate">
-                              {lang === 'vi' ? '2. Ảnh CCCD Mặt Sau' : '2. Back ID Card'} <span className="text-red-500">*</span>
-                            </label>
-                            <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                              {lang === 'vi' ? 'Mặt sau' : 'Back'}
-                            </span>
-                          </div>
-                          <div className="relative border border-dashed border-slate-300 hover:border-[#c34c36] rounded-2xl p-2.5 bg-white text-center transition h-[145px] flex flex-col justify-between">
-                            {docBackUrl ? (
-                              <div className="h-full flex flex-col justify-between">
-                                <div className="relative w-full h-20 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
-                                  <img src={docBackUrl} alt="Back ID" className="w-full h-full object-cover" />
-                                  <button
-                                    type="button"
-                                    onClick={() => setDocBackUrl('')}
-                                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-xs transition z-10 cursor-pointer"
-                                    title={lang === 'vi' ? 'Xóa ảnh' : 'Remove photo'}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                </div>
-                                <div className="flex items-center justify-between px-0.5 text-[10px]">
-                                  <span className="text-emerald-600 font-bold flex items-center gap-1">
-                                    <CheckCircle2 className="w-3 h-3" /> {lang === 'vi' ? 'Đã tải lên' : 'Uploaded'}
-                                  </span>
-                                  <label className="text-[#24263e] hover:text-[#c34c36] font-bold underline cursor-pointer">
-                                    {lang === 'vi' ? 'Đổi ảnh' : 'Change'}
-                                    <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'back')} />
-                                  </label>
-                                </div>
-                              </div>
-                            ) : (
-                              <label className="cursor-pointer flex flex-col items-center justify-center h-full space-y-1.5 hover:bg-slate-50/60 rounded-xl transition">
-                                <Camera className="w-6 h-6 text-slate-400 mx-auto" />
-                                <span className="text-[11px] font-bold text-slate-700 block">
-                                  {uploadingField === 'back' ? (lang === 'vi' ? 'Đang tải lên...' : 'Uploading...') : (lang === 'vi' ? 'Chọn ảnh mặt sau' : 'Select Back Photo')}
-                                </span>
-                                <span className="text-[9px] text-slate-400 block">{lang === 'vi' ? 'Hỗ trợ JPG, PNG, WEBP' : 'JPG, PNG, WEBP'}</span>
-                                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'back')} />
-                              </label>
-                            )}
-                          </div>
+                        {/* Detail Street Address */}
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-600 block mb-1">
+                            {lang === 'vi' ? 'Số nhà, ngõ ngách, tên đường chi tiết' : 'Street address / House number'}
+                          </label>
+                          <input
+                            type="text"
+                            value={streetAddress}
+                            onChange={handleStreetAddressChange}
+                            placeholder={lang === 'vi' ? 'VD: Số 123 đường Giải Phóng, Ngõ 4' : 'e.g., 123 Giai Phong St'}
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
+                          />
                         </div>
 
-                        {/* Selfie */}
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between h-5">
-                            <label className="text-[10px] font-bold text-slate-700 block truncate">
-                              {lang === 'vi' ? '3. Ảnh Chân Dung Selfie' : '3. Selfie Photo'} <span className="text-red-500">*</span>
+                        {/* Full combined address input */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] font-bold text-slate-700 block">
+                              {lang === 'vi' ? 'Địa chỉ đầy đủ bưu tá đến lấy (Tự động tổng hợp hoặc tự do sửa)' : 'Full Pickup Address (Auto-synced / Editable)'} <span className="text-red-500">*</span>
                             </label>
-                            <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 shrink-0">
-                              {lang === 'vi' ? 'AI So Khớp' : 'AI Match'}
+                            <span className="text-[9px] text-[#c34c36] font-semibold">
+                              {lang === 'vi' ? '✎ Có thể sửa trực tiếp' : '✎ Editable'}
                             </span>
                           </div>
-                          <div className="relative border border-dashed border-slate-300 hover:border-[#c34c36] rounded-2xl p-2.5 bg-white text-center transition h-[145px] flex flex-col justify-between">
-                            {selfieUrl ? (
-                              <div className="h-full flex flex-col justify-between">
-                                <div className="relative w-full h-20 rounded-xl overflow-hidden border border-emerald-400 bg-slate-50">
-                                  <img src={selfieUrl} alt="Selfie" className="w-full h-full object-cover" />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelfieUrl('');
-                                      setVnptClientSession('');
-                                      setVnptToken('');
-                                      setVnptLivenessResult(null);
-                                    }}
-                                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-xs transition z-10 cursor-pointer"
-                                    title={lang === 'vi' ? 'Xóa ảnh' : 'Remove photo'}
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                  <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-emerald-600/90 text-white rounded text-[8px] font-bold shadow-xs">
-                                    {vnptClientSession ? 'VNPT eKYC' : 'OK'}
+                          <input
+                            type="text"
+                            required
+                            value={pickupAddress}
+                            onChange={(e) => setPickupAddress(e.target.value)}
+                            placeholder={lang === 'vi' ? 'Số nhà, tên đường, phường/xã, tỉnh/thành phố' : 'Street address, ward, city'}
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900 font-medium"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between flex-wrap gap-1 text-[10px] text-slate-500 font-medium">
+                          <span className="flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>
+                              {lang === 'vi'
+                                ? 'Địa chỉ xác thực: Bưu tá sẽ đến tận kho nhận thiết bị bàn giao sang Hub kiểm định 48 bước.'
+                                : 'Verified address: Couriers will pick up devices from this address for 48-step Hub inspection.'}
+                            </span>
+                          </span>
+                          <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[9px] font-semibold">
+                            {lang === 'vi' ? '✓ Bạn có thể chỉnh sửa mọi ô trên' : '✓ All fields above are editable'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                            {lang === 'vi' ? 'Số Căn Cước Công Dân (CCCD/CMND)' : 'Citizen Identity Number (CCCD)'} <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={idCardNumber}
+                            onChange={(e) => setIdCardNumber(e.target.value)}
+                            placeholder="048299102941"
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                            {lang === 'vi' ? 'Loại Thiết Bị Bán Chủ Yếu' : 'Primary Product Category'}
+                          </label>
+                          <input
+                            type="text"
+                            value={sellerProductTypes}
+                            onChange={(e) => setSellerProductTypes(e.target.value)}
+                            placeholder={lang === 'vi' ? 'VD: Tủ lạnh, Máy giặt, Máy pha cafe...' : 'e.g., Refrigerators, Washers, Coffee machines...'}
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#c34c36] focus:ring-1 focus:ring-[#c34c36] outline-none text-xs bg-white text-slate-900"
+                          />
+                        </div>
+                      </div>
+
+                      {/* eKYC Document Photo Upload Section */}
+                      <div className="p-3.5 rounded-2xl bg-[#faf8f5] border border-slate-200 space-y-3">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                          <FileCheck className="w-4 h-4 text-[#24263e]" />
+                          <span>{lang === 'vi' ? 'Ảnh Tải Lên Xác Thực eKYC (Mặt Trước, Mặt Sau, Chân Dung)' : 'eKYC Verification Photo Uploads'}</span>
+                          <span className="text-red-500">*</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          {/* Front ID */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between h-5">
+                              <label className="text-[10px] font-bold text-slate-700 block truncate">
+                                {lang === 'vi' ? '1. Ảnh CCCD Mặt Trước' : '1. Front ID Card'} <span className="text-red-500">*</span>
+                              </label>
+                              <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                                {lang === 'vi' ? 'Mặt trước' : 'Front'}
+                              </span>
+                            </div>
+                            <div className="relative border border-dashed border-slate-300 hover:border-[#c34c36] rounded-2xl p-2.5 bg-white text-center transition h-[145px] flex flex-col justify-between">
+                              {docFrontUrl ? (
+                                <div className="h-full flex flex-col justify-between">
+                                  <div className="relative w-full h-20 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                                    <img src={docFrontUrl} alt="Front ID" className="w-full h-full object-cover" />
+                                    <button
+                                      type="button"
+                                      onClick={() => setDocFrontUrl('')}
+                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-xs transition z-10 cursor-pointer"
+                                      title={lang === 'vi' ? 'Xóa ảnh' : 'Remove photo'}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center justify-between px-0.5 text-[10px]">
+                                    <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" /> {lang === 'vi' ? 'Đã tải lên' : 'Uploaded'}
+                                    </span>
+                                    <label className="text-[#24263e] hover:text-[#c34c36] font-bold underline cursor-pointer">
+                                      {lang === 'vi' ? 'Đổi ảnh' : 'Change'}
+                                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'front')} />
+                                    </label>
                                   </div>
                                 </div>
-                                <div className="flex items-center justify-between px-0.5 text-[10px]">
+                              ) : (
+                                <label className="cursor-pointer flex flex-col items-center justify-center h-full space-y-1.5 hover:bg-slate-50/60 rounded-xl transition">
+                                  <Camera className="w-6 h-6 text-slate-400 mx-auto" />
+                                  <span className="text-[11px] font-bold text-slate-700 block">
+                                    {uploadingField === 'front' ? (lang === 'vi' ? 'Đang tải lên...' : 'Uploading...') : (lang === 'vi' ? 'Chọn ảnh mặt trước' : 'Select Front Photo')}
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">{lang === 'vi' ? 'Hỗ trợ JPG, PNG, WEBP' : 'JPG, PNG, WEBP'}</span>
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'front')} />
+                                </label>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Back ID */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between h-5">
+                              <label className="text-[10px] font-bold text-slate-700 block truncate">
+                                {lang === 'vi' ? '2. Ảnh CCCD Mặt Sau' : '2. Back ID Card'} <span className="text-red-500">*</span>
+                              </label>
+                              <span className="text-[9px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                                {lang === 'vi' ? 'Mặt sau' : 'Back'}
+                              </span>
+                            </div>
+                            <div className="relative border border-dashed border-slate-300 hover:border-[#c34c36] rounded-2xl p-2.5 bg-white text-center transition h-[145px] flex flex-col justify-between">
+                              {docBackUrl ? (
+                                <div className="h-full flex flex-col justify-between">
+                                  <div className="relative w-full h-20 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                                    <img src={docBackUrl} alt="Back ID" className="w-full h-full object-cover" />
+                                    <button
+                                      type="button"
+                                      onClick={() => setDocBackUrl('')}
+                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-xs transition z-10 cursor-pointer"
+                                      title={lang === 'vi' ? 'Xóa ảnh' : 'Remove photo'}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center justify-between px-0.5 text-[10px]">
+                                    <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" /> {lang === 'vi' ? 'Đã tải lên' : 'Uploaded'}
+                                    </span>
+                                    <label className="text-[#24263e] hover:text-[#c34c36] font-bold underline cursor-pointer">
+                                      {lang === 'vi' ? 'Đổi ảnh' : 'Change'}
+                                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'back')} />
+                                    </label>
+                                  </div>
+                                </div>
+                              ) : (
+                                <label className="cursor-pointer flex flex-col items-center justify-center h-full space-y-1.5 hover:bg-slate-50/60 rounded-xl transition">
+                                  <Camera className="w-6 h-6 text-slate-400 mx-auto" />
+                                  <span className="text-[11px] font-bold text-slate-700 block">
+                                    {uploadingField === 'back' ? (lang === 'vi' ? 'Đang tải lên...' : 'Uploading...') : (lang === 'vi' ? 'Chọn ảnh mặt sau' : 'Select Back Photo')}
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block">{lang === 'vi' ? 'Hỗ trợ JPG, PNG, WEBP' : 'JPG, PNG, WEBP'}</span>
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'back')} />
+                                </label>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Selfie */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between h-5">
+                              <label className="text-[10px] font-bold text-slate-700 block truncate">
+                                {lang === 'vi' ? '3. Ảnh Chân Dung Selfie' : '3. Selfie Photo'} <span className="text-red-500">*</span>
+                              </label>
+                              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 shrink-0">
+                                {lang === 'vi' ? 'AI So Khớp' : 'AI Match'}
+                              </span>
+                            </div>
+                            <div className="relative border border-dashed border-slate-300 hover:border-[#c34c36] rounded-2xl p-2.5 bg-white text-center transition h-[145px] flex flex-col justify-between">
+                              {selfieUrl ? (
+                                <div className="h-full flex flex-col justify-between">
+                                  <div className="relative w-full h-20 rounded-xl overflow-hidden border border-emerald-400 bg-slate-50">
+                                    <img src={selfieUrl} alt="Selfie" className="w-full h-full object-cover" />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelfieUrl('');
+                                        setVnptClientSession('');
+                                        setVnptToken('');
+                                        setVnptLivenessResult(null);
+                                      }}
+                                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-xs transition z-10 cursor-pointer"
+                                      title={lang === 'vi' ? 'Xóa ảnh' : 'Remove photo'}
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                    <div className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-emerald-600/90 text-white rounded text-[8px] font-bold shadow-xs">
+                                      {vnptClientSession ? 'VNPT eKYC' : 'OK'}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center justify-between px-0.5 text-[10px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => setIsFaceScannerOpen(true)}
+                                      className="text-[#c34c36] font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                                    >
+                                      <Camera className="w-3 h-3" />
+                                      <span>{lang === 'vi' ? 'Quét lại' : 'Rescan'}</span>
+                                    </button>
+                                    <label className="text-slate-500 hover:text-slate-800 font-bold underline cursor-pointer">
+                                      {lang === 'vi' ? 'Đổi tệp' : 'Upload'}
+                                      <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'selfie')} />
+                                    </label>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col items-center justify-center h-full space-y-2">
                                   <button
                                     type="button"
                                     onClick={() => setIsFaceScannerOpen(true)}
-                                    className="text-[#c34c36] font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                                    className="w-full py-2 px-2 bg-gradient-to-r from-[#c34c36] to-[#fce5da] text-slate-900 rounded-xl text-[10px] font-bold shadow-xs hover:opacity-95 transition flex items-center justify-center gap-1 cursor-pointer"
                                   >
-                                    <Camera className="w-3 h-3" />
-                                    <span>{lang === 'vi' ? 'Quét lại' : 'Rescan'}</span>
+                                    <Camera className="w-3.5 h-3.5 text-slate-900" />
+                                    <span>{lang === 'vi' ? 'Mở Camera Quét Mặt' : 'Scan Face'}</span>
                                   </button>
-                                  <label className="text-slate-500 hover:text-slate-800 font-bold underline cursor-pointer">
-                                    {lang === 'vi' ? 'Đổi tệp' : 'Upload'}
+                                  <label className="text-[9px] text-slate-500 hover:text-[#24263e] underline font-bold cursor-pointer block text-center">
+                                    {uploadingField === 'selfie'
+                                      ? (lang === 'vi' ? 'Đang tải lên...' : 'Uploading...')
+                                      : (lang === 'vi' ? 'Hoặc chọn ảnh từ máy' : 'Or select photo')}
                                     <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'selfie')} />
                                   </label>
                                 </div>
-                              </div>
-                            ) : (
-                              <div className="flex flex-col items-center justify-center h-full space-y-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setIsFaceScannerOpen(true)}
-                                  className="w-full py-2 px-2 bg-gradient-to-r from-[#c34c36] to-[#fce5da] text-slate-900 rounded-xl text-[10px] font-bold shadow-xs hover:opacity-95 transition flex items-center justify-center gap-1 cursor-pointer"
-                                >
-                                  <Camera className="w-3.5 h-3.5 text-slate-900" />
-                                  <span>{lang === 'vi' ? 'Mở Camera Quét Mặt' : 'Scan Face'}</span>
-                                </button>
-                                <label className="text-[9px] text-slate-500 hover:text-[#24263e] underline font-bold cursor-pointer block text-center">
-                                  {uploadingField === 'selfie'
-                                    ? (lang === 'vi' ? 'Đang tải lên...' : 'Uploading...')
-                                    : (lang === 'vi' ? 'Hoặc chọn ảnh từ máy' : 'Or select photo')}
-                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileUpload(e, 'selfie')} />
-                                </label>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Bank Information for Payout */}
-                    <div className="p-3 rounded-2xl bg-white border border-gray-200 space-y-2.5">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                        <CreditCard className="w-3.5 h-3.5 text-[#24263e]" />
-                        <span>{lang === 'vi' ? 'Tài Khoản Ngân Hàng Nhận Tiền Bán (Giải Ngân Escrow)' : 'Bank Account for Escrow Payout'}</span>
+                      {/* Bank Information for Payout */}
+                      <div className="p-3 rounded-2xl bg-white border border-gray-200 space-y-2.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                          <CreditCard className="w-3.5 h-3.5 text-[#24263e]" />
+                          <span>{lang === 'vi' ? 'Tài Khoản Ngân Hàng Nhận Tiền Bán (Giải Ngân Escrow)' : 'Bank Account for Escrow Payout'}</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block mb-0.5">{lang === 'vi' ? 'Ngân hàng' : 'Bank name'}</label>
+                            <input
+                              type="text"
+                              value={sellerBankName}
+                              onChange={(e) => setSellerBankName(e.target.value)}
+                              placeholder="Vietcombank"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:border-[#c34c36]"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block mb-0.5">{lang === 'vi' ? 'Số tài khoản' : 'Account number'}</label>
+                            <input
+                              type="text"
+                              value={sellerAccountNumber}
+                              onChange={(e) => setSellerAccountNumber(e.target.value)}
+                              placeholder="991204882910"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:border-[#c34c36]"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-slate-500 block mb-0.5">{lang === 'vi' ? 'Chủ tài khoản' : 'Account holder'}</label>
+                            <input
+                              type="text"
+                              value={sellerAccountHolder}
+                              onChange={(e) => setSellerAccountHolder(e.target.value)}
+                              placeholder="HOANG QUOC KHANG"
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:border-[#c34c36]"
+                            />
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block mb-0.5">{lang === 'vi' ? 'Ngân hàng' : 'Bank name'}</label>
-                          <input
-                            type="text"
-                            value={sellerBankName}
-                            onChange={(e) => setSellerBankName(e.target.value)}
-                            placeholder="Vietcombank"
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:border-[#c34c36]"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block mb-0.5">{lang === 'vi' ? 'Số tài khoản' : 'Account number'}</label>
-                          <input
-                            type="text"
-                            value={sellerAccountNumber}
-                            onChange={(e) => setSellerAccountNumber(e.target.value)}
-                            placeholder="991204882910"
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:border-[#c34c36]"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-slate-500 block mb-0.5">{lang === 'vi' ? 'Chủ tài khoản' : 'Account holder'}</label>
-                          <input
-                            type="text"
-                            value={sellerAccountHolder}
-                            onChange={(e) => setSellerAccountHolder(e.target.value)}
-                            placeholder="HOANG QUOC KHANG"
-                            className="w-full px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs outline-none focus:border-[#c34c36]"
-                          />
-                        </div>
-                      </div>
+                      {/* Terms & Agreement */}
+                      <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                        <input
+                          type="checkbox"
+                          checked={sellerTermsAgreed}
+                          onChange={(e) => setSellerTermsAgreed(e.target.checked)}
+                          className="mt-0.5 rounded text-[#24263e] focus:ring-[#c34c36] w-4 h-4 cursor-pointer"
+                        />
+                        <span className="text-[11px] text-slate-600 leading-relaxed">
+                          {lang === 'vi'
+                            ? 'Tôi cam kết mọi thiết bị đăng bán là chính hãng, đúng tình trạng; sẵn sàng giao hàng cho bưu tá để Kỹ sư Hub kiểm định dán tem NFC và tuân thủ quy chế giải ngân qua quỹ tín thác Escrow của SecondLife.'
+                            : 'I commit that all listed appliances are authentic and match their described condition; I agree to hand them over to couriers for Hub inspection and NFC sealing, and abide by the SecondLife Escrow payout terms.'}
+                        </span>
+                      </label>
                     </div>
 
-                    {/* Terms & Agreement */}
-                    <label className="flex items-start gap-2.5 cursor-pointer pt-1">
-                      <input
-                        type="checkbox"
-                        checked={sellerTermsAgreed}
-                        onChange={(e) => setSellerTermsAgreed(e.target.checked)}
-                        className="mt-0.5 rounded text-[#24263e] focus:ring-[#c34c36] w-4 h-4 cursor-pointer"
-                      />
-                      <span className="text-[11px] text-slate-600 leading-relaxed">
-                        {lang === 'vi'
-                          ? 'Tôi cam kết mọi thiết bị đăng bán là chính hãng, đúng tình trạng; sẵn sàng giao hàng cho bưu tá để Kỹ sư Hub kiểm định dán tem NFC và tuân thủ quy chế giải ngân qua quỹ tín thác Escrow của SecondLife.'
-                          : 'I commit that all listed appliances are authentic and match their described condition; I agree to hand them over to couriers for Hub inspection and NFC sealing, and abide by the SecondLife Escrow payout terms.'}
-                      </span>
-                    </label>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
-                    {isSellerRegistered && (
+                    {/* Action Buttons */}
+                    <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+                      {isSellerRegistered && (
+                        <button
+                          type="button"
+                          onClick={() => setShowSellerRegistrationForm(false)}
+                          className="px-4 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-100 text-slate-600 text-xs font-bold transition cursor-pointer"
+                        >
+                          {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                        </button>
+                      )}
                       <button
-                        type="button"
-                        onClick={() => setShowSellerRegistrationForm(false)}
-                        className="px-4 py-2 rounded-xl bg-white border border-gray-200 hover:bg-gray-100 text-slate-600 text-xs font-bold transition cursor-pointer"
+                        type="submit"
+                        disabled={isSubmittingSeller}
+                        className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c34c36] to-[#fce5da] hover:opacity-95 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
                       >
-                        {lang === 'vi' ? 'Hủy' : 'Cancel'}
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>
+                          {isSubmittingSeller
+                            ? (lang === 'vi' ? 'Đang Gửi Hồ Sơ...' : 'Submitting...')
+                            : isSellerRegistered
+                              ? (lang === 'vi' ? 'Cập Nhật Hồ Sơ Gian Hàng' : 'Update Store Profile')
+                              : (lang === 'vi' ? 'Xác Nhận Đăng Ký & Gửi Duyệt eKYC' : 'Confirm Registration & Submit eKYC')}
+                        </span>
                       </button>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={isSubmittingSeller}
-                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c34c36] to-[#fce5da] hover:opacity-95 disabled:opacity-50 text-white text-xs font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>
-                        {isSubmittingSeller
-                          ? (lang === 'vi' ? 'Đang Gửi Hồ Sơ...' : 'Submitting...')
-                          : isSellerRegistered
-                            ? (lang === 'vi' ? 'Cập Nhật Hồ Sơ Gian Hàng' : 'Update Store Profile')
-                            : (lang === 'vi' ? 'Xác Nhận Đăng Ký & Gửi Duyệt eKYC' : 'Confirm Registration & Submit eKYC')}
-                      </span>
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
+                    </div>
+                  </form>
+                )}
+              </div>
             )
           )}
         </div>

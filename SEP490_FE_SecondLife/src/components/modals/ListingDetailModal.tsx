@@ -25,8 +25,8 @@ interface ListingDetailModalProps {
   onClose: () => void;
   onBuyClick: (listing: Listing) => void;
   onChatClick: (listing: Listing) => void;
-  lang: Language;
   onOpenSellerReviews?: (sellerId: string, sellerName: string) => void;
+  isAdmin?: boolean;
 }
 
 export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
@@ -35,7 +35,8 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   onBuyClick,
   onChatClick,
   lang,
-  onOpenSellerReviews
+  onOpenSellerReviews,
+  isAdmin = false
 }) => {
   if (!listing) return null;
   const t = translations[lang];
@@ -102,135 +103,156 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5">
-              {/* Gallery Column (6 cols) */}
-              <div className="md:col-span-6 space-y-2">
-                <div className="relative aspect-4/3 max-h-[220px] w-full bg-[#faf8f5] rounded-xl overflow-hidden border border-gray-200">
-                  <img
-                    src={listing.photos[activePhotoKey] || listing.photos.front}
-                    alt={listing.title}
-                    className="w-full h-full object-cover"
-                  />
+            {/* Gallery Column (6 cols) */}
+            <div className="md:col-span-6 space-y-2">
+              <div className="relative aspect-4/3 max-h-[220px] w-full bg-[#faf8f5] rounded-xl overflow-hidden border border-gray-200">
+                <img
+                  src={listing.photos[activePhotoKey] || listing.photos.front}
+                  alt={listing.title}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+
+              {/* Thumbnails */}
+              <div className="space-y-1">
+                <div className="text-[10px] font-bold text-[#24263e]/70 flex items-center gap-1">
+                  <FileCheck2 className="w-3 h-3 text-[#24263e]" />
+                  <span>{t.photoChecklistTitle}</span>
+                </div>
+                <div className="grid grid-cols-5 gap-1">
+                  {photoKeys.map((item) => {
+                    const isSelected = activePhotoKey === item.key;
+                    return (
+                      <button
+                        key={item.key}
+                        onClick={() => setActivePhotoKey(item.key)}
+                        className={`relative rounded-lg overflow-hidden aspect-square border transition-all cursor-pointer ${isSelected
+                            ? 'border-[#24263e] ring-2 ring-[#24263e]/30 scale-102'
+                            : 'border-gray-200 opacity-75 hover:opacity-100'
+                          }`}
+                      >
+                        <img
+                          src={listing.photos[item.key] || listing.photos.front}
+                          alt={item.labelVi}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Price & Seller Action Column (6 cols) */}
+            <div className="md:col-span-6 flex flex-col justify-between space-y-2.5">
+              <div className="space-y-2">
+                <div className="flex items-center gap-1.5 text-[10px] text-[#24263e]/70 font-medium">
+                  <span className="font-black text-[#24263e] uppercase tracking-wider">{listing.brand}</span>
+                  <span>•</span>
+                  <span className="truncate max-w-[130px]">{listing.category}</span>
+                  <span>•</span>
+                  <span>{listing.purchaseYear}</span>
                 </div>
 
-                {/* Thumbnails */}
-                <div className="space-y-1">
-                  <div className="text-[10px] font-bold text-[#24263e]/70 flex items-center gap-1">
-                    <FileCheck2 className="w-3 h-3 text-[#24263e]" />
-                    <span>{t.photoChecklistTitle}</span>
+                <h1 className="text-xs sm:text-[14px] font-bold text-[#24263e] leading-snug line-clamp-2">
+                  {listing.title}
+                </h1>
+
+                {/* Price block */}
+                <div className="bg-[#faf8f5] rounded-xl p-2.5 border border-gray-200 space-y-0.5">
+                  <div className="text-[10px] text-[#24263e]/70 font-medium leading-none">
+                    {lang === 'vi' ? 'Giá người bán niêm yết' : 'Listing Price'}
                   </div>
-                  <div className="grid grid-cols-5 gap-1">
-                    {photoKeys.map((item) => {
-                      const isSelected = activePhotoKey === item.key;
-                      return (
-                        <button
-                          key={item.key}
-                          onClick={() => setActivePhotoKey(item.key)}
-                          className={`relative rounded-lg overflow-hidden aspect-square border transition-all cursor-pointer ${
-                            isSelected
-                              ? 'border-[#24263e] ring-2 ring-[#24263e]/30 scale-102'
-                              : 'border-gray-200 opacity-75 hover:opacity-100'
-                          }`}
-                        >
-                          <img
-                            src={listing.photos[item.key] || listing.photos.front}
-                            alt={item.labelVi}
-                            className="w-full h-full object-cover"
-                          />
-                        </button>
-                      );
-                    })}
+                  <div className="text-lg sm:text-xl font-black text-[#c34c36] leading-tight">
+                    {formatVND(listing.priceVnd)}
+                  </div>
+                  <div className="text-[10px] text-emerald-800 font-bold flex items-center gap-1 pt-0.5">
+                    <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                    <span>{lang === 'vi' ? 'Bảo lãnh Escrow 100%: Kiểm tra 48h mới giải ngân' : '100% Escrow Protection'}</span>
+                  </div>
+                </div>
+
+                {/* Seller Card */}
+                <div className="p-2.5 rounded-xl bg-gradient-to-br from-[#faf8f5] to-amber-50/40 border border-amber-200/80 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-[#24263e] text-white font-black flex items-center justify-center text-xs shadow-xs shrink-0">
+                        {listing.sellerName.charAt(0)}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-[#24263e] flex items-center gap-1">
+                          <span className="truncate max-w-[110px]">{listing.sellerName}</span>
+                          {listing.sellerVerified && (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                          )}
+                        </div>
+
+                        <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.2 flex-wrap">
+                          <span className="flex items-center text-amber-500 font-bold">
+                            <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 mr-0.5" />
+                            {listing.sellerRating}
+                          </span>
+                          <span>•</span>
+                          <span>{sellerTrust.reviewCount} {lang === 'vi' ? 'đánh giá' : 'reviews'}</span>
+                          {listing.location && (
+                            <>
+                              <span>•</span>
+                              <span className="flex items-center gap-0.5 text-slate-600 font-medium">
+                                <MapPin className="w-2.5 h-2.5 text-[#c34c36]" />
+                                <span>{listing.location}</span>
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Trust Score Badge */}
+                    <div className="text-right shrink-0">
+                      <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#24263e] text-white shadow-xs">
+                        <Award className="w-3 h-3 text-amber-300" />
+                        <span className="text-[11px] font-black">{sellerTrust.trustScore}</span>
+                        <span className="text-[9px] text-white/70">/100</span>
+                      </div>
+                      <div className="text-[9px] font-bold text-amber-700 mt-0.2">
+                        {sellerTrust.tier}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* View Seller Reviews Trigger */}
+                  <div className="pt-1.5 border-t border-amber-200/50 flex items-center justify-between text-[10px]">
+                    <span className="text-slate-600">
+                      {lang === 'vi' ? 'Đạt chuẩn: ' : 'Pass rate: '}
+                      <strong className="text-emerald-700">{sellerTrust.hubPassRate}%</strong>
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => onOpenSellerReviews?.(listing.sellerId, listing.sellerName)}
+                      className="font-bold text-[#c34c36] hover:underline cursor-pointer flex items-center gap-0.5"
+                    >
+                      <span>{lang === 'vi' ? 'Xem đánh giá buyer' : 'View feedback'}</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {/* Price & Seller Action Column (6 cols) */}
-              <div className="md:col-span-6 flex flex-col justify-between space-y-2.5">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-[10px] text-[#24263e]/70 font-medium">
-                    <span className="font-black text-[#24263e] uppercase tracking-wider">{listing.brand}</span>
-                    <span>•</span>
-                    <span className="truncate max-w-[130px]">{listing.category}</span>
-                    <span>•</span>
-                    <span>{listing.purchaseYear}</span>
-                  </div>
-
-                  <h1 className="text-xs sm:text-[14px] font-bold text-[#24263e] leading-snug line-clamp-2">
-                    {listing.title}
-                  </h1>
-
-                  {/* Price block */}
-                  <div className="bg-[#faf8f5] rounded-xl p-2.5 border border-gray-200 space-y-0.5">
-                    <div className="text-[10px] text-[#24263e]/70 font-medium leading-none">
-                      {lang === 'vi' ? 'Giá người bán niêm yết' : 'Listing Price'}
-                    </div>
-                    <div className="text-lg sm:text-xl font-black text-[#c34c36] leading-tight">
-                      {formatVND(listing.priceVnd)}
-                    </div>
-                    <div className="text-[10px] text-emerald-800 font-bold flex items-center gap-1 pt-0.5">
-                      <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
-                      <span>{lang === 'vi' ? 'Bảo lãnh Escrow 100%: Kiểm tra 48h mới giải ngân' : '100% Escrow Protection'}</span>
-                    </div>
-                  </div>
-
-                  {/* Seller Card */}
-                  <div className="p-2.5 rounded-xl bg-gradient-to-br from-[#faf8f5] to-amber-50/40 border border-amber-200/80 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-lg bg-[#24263e] text-white font-black flex items-center justify-center text-xs shadow-xs shrink-0">
-                          {listing.sellerName.charAt(0)}
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-[#24263e] flex items-center gap-1">
-                            <span className="truncate max-w-[110px]">{listing.sellerName}</span>
-                            {listing.sellerVerified && (
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                            )}
-                          </div>
-
-                          <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.2">
-                            <span className="flex items-center text-amber-500 font-bold">
-                              <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 mr-0.5" />
-                              {listing.sellerRating}
-                            </span>
-                            <span>•</span>
-                            <span>{sellerTrust.reviewCount} {lang === 'vi' ? 'đánh giá' : 'reviews'}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Trust Score Badge */}
-                      <div className="text-right shrink-0">
-                        <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#24263e] text-white shadow-xs">
-                          <Award className="w-3 h-3 text-amber-300" />
-                          <span className="text-[11px] font-black">{sellerTrust.trustScore}</span>
-                          <span className="text-[9px] text-white/70">/100</span>
-                        </div>
-                        <div className="text-[9px] font-bold text-amber-700 mt-0.2">
-                          {sellerTrust.tier}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* View Seller Reviews Trigger */}
-                    <div className="pt-1.5 border-t border-amber-200/50 flex items-center justify-between text-[10px]">
-                      <span className="text-slate-600">
-                        {lang === 'vi' ? 'Đạt chuẩn: ' : 'Pass rate: '}
-                        <strong className="text-emerald-700">{sellerTrust.hubPassRate}%</strong>
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={() => onOpenSellerReviews?.(listing.sellerId, listing.sellerName)}
-                        className="font-bold text-[#c34c36] hover:underline cursor-pointer flex items-center gap-0.5"
-                      >
-                        <span>{lang === 'vi' ? 'Xem đánh giá buyer' : 'View feedback'}</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
-                    </div>
+              {/* Action Buttons */}
+              {isAdmin ? (
+                <div className="space-y-1.5 pt-1">
+                  <div className="w-full py-2.5 px-3 bg-slate-100 text-slate-500 rounded-xl font-bold text-xs text-center border border-slate-200">
+                    {lang === 'vi' ? 'Quản trị viên không thể mua hàng hoặc chat' : 'Admin cannot purchase or chat'}
                   </div>
                 </div>
-
-                {/* Action Buttons */}
+              ) : listing.status === 'RESERVED' || listing.backendStatus === 'RESERVED' || listing.status === 'reserved' ? (
+                <div className="space-y-1.5 pt-1">
+                  <div className="w-full py-2.5 px-3 bg-amber-50 text-amber-800 rounded-xl font-bold text-xs text-center border border-amber-200">
+                    {lang === 'vi' ? 'Sản phẩm đang được người khác chốt' : 'Item is currently reserved'}
+                  </div>
+                </div>
+              ) : (
                 <div className="space-y-1.5 pt-1">
                   <button
                     onClick={() => onBuyClick(listing)}
@@ -248,8 +270,9 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                     <span>{lang === 'vi' ? 'Chat & Đàm Phán Trả Giá Với Người Bán' : 'Chat & Make Counter Offer'}</span>
                   </button>
                 </div>
-              </div>
+              )}
             </div>
+          </div>
 
           {/* AI Price Estimation & Valuation Deep-Dive */}
           {listing.aiPriceEstimation && (
@@ -313,11 +336,10 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setReviewsTab('product')}
-                  className={`text-xs font-extrabold pb-0.5 transition cursor-pointer flex items-center gap-1 ${
-                    reviewsTab === 'product'
+                  className={`text-xs font-extrabold pb-0.5 transition cursor-pointer flex items-center gap-1 ${reviewsTab === 'product'
                       ? 'text-[#24263e] border-b-2 border-[#c34c36]'
                       : 'text-slate-400 hover:text-slate-600'
-                  }`}
+                    }`}
                 >
                   <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                   <span>{lang === 'vi' ? `Đánh Giá Sản Phẩm (${productReviews.length})` : `Item Reviews (${productReviews.length})`}</span>
@@ -326,11 +348,10 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setReviewsTab('seller')}
-                  className={`text-xs font-extrabold pb-0.5 transition cursor-pointer flex items-center gap-1 ${
-                    reviewsTab === 'seller'
+                  className={`text-xs font-extrabold pb-0.5 transition cursor-pointer flex items-center gap-1 ${reviewsTab === 'seller'
                       ? 'text-[#24263e] border-b-2 border-[#c34c36]'
                       : 'text-slate-400 hover:text-slate-600'
-                  }`}
+                    }`}
                 >
                   <UserCheck className="w-3.5 h-3.5 text-[#c34c36]" />
                   <span>{lang === 'vi' ? `Đánh Giá Người Bán (${sellerReviews.length})` : `Seller Reviews (${sellerReviews.length})`}</span>
@@ -392,9 +413,8 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                         {[1, 2, 3, 4, 5].map((s) => (
                           <Star
                             key={s}
-                            className={`w-3 h-3 ${
-                              s <= rev.rating ? 'text-amber-400 fill-amber-400' : 'text-gray-200'
-                            }`}
+                            className={`w-3 h-3 ${s <= rev.rating ? 'text-amber-400 fill-amber-400' : 'text-gray-200'
+                              }`}
                           />
                         ))}
                       </div>

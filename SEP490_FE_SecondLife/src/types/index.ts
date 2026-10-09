@@ -14,7 +14,7 @@ export type ItemCategory =
   | 'Lò vi sóng & Lò nướng'
   | 'Nồi cơm & Bếp từ';
 
-export type ListingStatus = 'active' | 'reserved' | 'sold' | 'draft';
+export type ListingStatus = 'active' | 'reserved' | 'sold' | 'draft' | 'RESERVED';
 
 export interface PhotoChecklist {
   front: string;
@@ -29,6 +29,7 @@ export interface InspectionChecklistItem {
   id: string;
   category: string;
   title: string;
+  label?: string; // Compatibility alias for title
   description: string;
   status: 'pass' | 'fail' | 'warning' | 'pending';
   notes?: string;
@@ -56,6 +57,7 @@ export interface Listing {
   location: string;
   sellerId: string;
   sellerName: string;
+  sellerAvatar?: string;
   sellerRating: number;
   sellerCompletedOrders: number;
   sellerVerified: boolean;
@@ -66,6 +68,10 @@ export interface Listing {
   requiresInspection: boolean;
   photos: PhotoChecklist;
   photoGallery: string[];
+  shippingWeight?: number;
+  shippingLength?: number;
+  shippingWidth?: number;
+  shippingHeight?: number;
   aiPriceEstimation?: {
     minVnd: number;
     maxVnd: number;
@@ -114,17 +120,17 @@ export interface InspectionReport {
 
 export interface ShippingLeg {
   id: string;
-  legType: 'SELLER_TO_CENTER' | 'CENTER_TO_BUYER' | 'DIRECT';
-  carrier: 'GHTK' | 'GHN';
+  legType: 'SELLER_TO_CENTER' | 'CENTER_TO_BUYER' | 'DIRECT' | string;
+  carrier: 'GHTK' | 'GHN' | 'GHN Express' | string;
   trackingNumber: string;
-  status: 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED';
+  status: 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED' | string;
   origin: string;
   destination: string;
   estimatedDelivery: string;
   timeline: {
     timestamp: string;
     description: string;
-    location: string;
+    location?: string;
   }[];
 }
 
@@ -153,6 +159,10 @@ export interface EscrowOrder {
   multiStagePhotos: MultiStagePhotos;
   isReviewed?: boolean;
   userReview?: ProductReview;
+  backendStatus?: OrderBackendStatus;
+  shippingQuoteId?: string;
+  shippingDeliveredAt?: string;
+  deliveryAddress?: any;
 }
 
 export interface ProductReview {
@@ -251,6 +261,7 @@ export interface UserProfile {
   gender?: 'male' | 'female' | 'other';
   birthday?: string;
   walletBalanceVnd?: number;
+  walletBalance?: number;
   escrowLockedVnd?: number;
   kycStatus?: 'verified' | 'pending' | 'unverified';
   emailVerified?: boolean;
@@ -261,6 +272,14 @@ export interface UserProfile {
   isSellerRegistered?: boolean;
   shopName?: string;
   pickupAddress?: string;
+  wardName?: string;
+  provinceName?: string;
+  province?: string;
+  district?: string;
+  ward?: string;
+  streetAddress?: string;
+  latitude?: number;
+  longitude?: number;
   idCardNumber?: string;
   bankAccount?: {
     bankName: string;
@@ -336,6 +355,17 @@ export interface DepositResponseDTO {
   createdAt: string;
 }
 
+export interface WalletTransaction {
+  id: string;
+  walletId: string;
+  amount: number;
+  type: 'DEPOSIT' | 'WITHDRAW' | 'PAYMENT' | 'REFUND' | string;
+  status: 'PENDING' | 'SUCCESS' | 'FAILED' | string;
+  description: string;
+  createdAt: string;
+}
+
+
 // ==========================================
 // 2. Negotiation Types
 // ==========================================
@@ -361,12 +391,16 @@ export interface Negotiation {
 // ==========================================
 // 3. Order & Escrow Types
 // ==========================================
-export type OrderStatusBackend = 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
-export type EscrowStatusBackend = 'HELD' | 'RELEASED' | 'REFUNDED';
+export type OrderStatusBackend = 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'COMPLETED' | 'CANCELLED';
+export type OrderBackendStatus = OrderStatusBackend;
+export type EscrowStatusBackend = 'HELD' | 'RELEASED' | 'REFUNDED' | 'FROZEN';
 
 export interface OrderRequestDTO {
   postId: string;
+  shippingQuoteId: string;
+  requestId: string;
   negotiationId?: string;
+  agreedPrice?: number;
 }
 
 export interface OrderBackend {
@@ -377,9 +411,80 @@ export interface OrderBackend {
   sellerId: string;
   negotiationId?: string;
   finalPrice: number;
+  shippingQuoteId?: string;
+  shippingFee?: number;
+  totalPaid?: number;
+  shippingDeliveredAt?: string;
+  deliveryAddress?: string;
   status: OrderStatusBackend;
   escrowStatus: EscrowStatusBackend;
   createdAt: string;
 }
+
+// ==========================================
+// 4. GHN Shipping & Tracking Types
+// ==========================================
+export interface ShippingQuoteDeliveryAddressDto {
+  name: string;
+  phone: string;
+  address: string;
+  provinceName: string;
+  wardName: string;
+  newAddress: boolean;
+}
+
+export interface ShippingQuoteRequestDto {
+  postId: string;
+  negotiationId?: string;
+  deliveryAddress: ShippingQuoteDeliveryAddressDto;
+}
+
+export interface ShippingQuoteResponseDto {
+  quoteId: string;
+  leg: string;
+  shippingFee: number;
+  productPrice: number;
+  totalPayable: number;
+  insuranceValue?: number;
+  expiresAt: string;
+  expectedDeliveryTime?: string;
+}
+
+export interface CreateShipmentRequestDto {
+  requestId: string;
+  leg: 'SELLER_TO_BUYER' | 'SELLER_TO_CENTER' | 'CENTER_TO_BUYER' | 'BUYER_TO_SELLER';
+  fromAddress?: any;
+  toAddress?: any;
+  reason?: string;
+}
+
+export interface ShipmentBackend {
+  shipmentId: string;
+  orderId: string;
+  inspectionOrderId?: string;
+  leg: string;
+  orderCode: string | null;
+  status: string; // PENDING, READY_TO_PICK, PICKING, PICKED, DELIVERING, DELIVERED, CANCELLED
+  providerStatus: string | null; // GHN status: ready_to_pick, picking, picked, storing, transporting, delivering, delivered, cancel
+  quotedFee?: number;
+  actualFee?: number;
+  expectedDeliveryTime: string | null;
+  deliveredAt: string | null;
+  reason?: string | null;
+  lastError?: string | null;
+  podUrl?: string | null;
+}
+
+export interface ShipmentEventBackend {
+  id: string;
+  shipmentId: string;
+  eventKey?: string;
+  type: string;
+  status: string | null;
+  occurredAt: string;
+  reason: string | null;
+  payload?: string;
+}
+
 
 
