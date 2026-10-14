@@ -43,6 +43,8 @@ export interface UserRoleAuditResponseDto {
   action: string;
   changedBy: string;
   changedAt: string;
+  oldRoles?: string[];
+  newRoles?: string[];
 }
 
 export interface GetAdminUsersParams {
@@ -144,7 +146,7 @@ export const adminService = {
   ): Promise<SellerVerificationResponseDto> {
     const res = await request<SellerVerificationResponseDto>(`/admin/seller-verifications/${id}/reject`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ rejectionReason: data.rejectionReason }),
       requiresAuth: true,
     });
     return res.data;
@@ -156,7 +158,7 @@ export const adminService = {
   ): Promise<SellerVerificationResponseDto> {
     const res = await request<SellerVerificationResponseDto>(`/admin/seller-verifications/${id}/request-resubmit`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ rejectionReason: data.rejectionReason }),
       requiresAuth: true,
     });
     return res.data;

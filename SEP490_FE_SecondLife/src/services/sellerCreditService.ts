@@ -2,8 +2,9 @@ import { request, PageResponse } from './apiClient';
 import { CreditPricingRuleResponseDto, CreditDiscountTierResponseDto } from './adminCreditPricingService';
 
 export interface CreditBalanceResponseDto {
-  listing: number;
-  valuation: number;
+  postCredits: number;
+  valuationCredits: number;
+  chatCredits: number;
 }
 
 export interface CreditQuoteResponseDto {
@@ -61,11 +62,19 @@ export const sellerCreditService = {
    * GET /api/seller/credits
    */
   async getCredits(): Promise<CreditBalanceResponseDto> {
-    const res = await request<CreditBalanceResponseDto>('/seller/credits', {
-      method: 'GET',
-      requiresAuth: true,
-    });
-    return (res as any)?.data || res;
+    try {
+      const res = await request<CreditBalanceResponseDto>('/seller/credits', {
+        method: 'GET',
+        requiresAuth: true,
+      });
+      return (res as any)?.data || res;
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (msg.includes('403') || err?.status === 403) {
+        return { postCredits: 0, valuationCredits: 0, chatCredits: 0 };
+      }
+      throw err;
+    }
   },
 
   /**

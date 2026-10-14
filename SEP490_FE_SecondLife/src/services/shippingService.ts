@@ -5,6 +5,8 @@ import {
   CreateShipmentRequestDto,
   ShipmentBackend,
   ShipmentEventBackend,
+  GeocodedAddressDto,
+  LalamoveTrackingResponse,
 } from '../types';
 
 export interface ShippingParcel {
@@ -25,7 +27,10 @@ export interface GhnLocation {
 export interface ShippingAddressDto {
   name: string;
   phone: string;
-  address: string;
+  address?: string;
+  latitude?: number;
+  longitude?: number;
+  city?: string;
   provinceName?: string;
   districtName?: string;
   wardName?: string;
@@ -50,9 +55,11 @@ export interface SellerOnboardingResponseDto {
 export interface SellerPickupAddressRequestDto {
   name: string;
   phone: string;
-  address: string;
-  provinceId: number;
-  wardId: number;
+  latitude?: number;
+  longitude?: number;
+  address?: string;
+  provinceId?: number;
+  wardId?: number;
 }
 
 export interface SellerOnboardingRequestDto {
@@ -61,6 +68,7 @@ export interface SellerOnboardingRequestDto {
   phone: string;
   pickupAddress: SellerPickupAddressRequestDto;
 }
+
 
 // Full 63 provinces of Vietnam fallback
 export const FALLBACK_PROVINCES: GhnLocation[] = [
@@ -459,6 +467,36 @@ export const shippingService = {
   },
 
   /**
+   * Reverse geocode tọa độ GPS sang địa chỉ dạng chữ qua BE (Geoapify)
+   * POST /api/v1/shipping/reverse-geocode
+   */
+  async reverseGeocode(latitude: number, longitude: number): Promise<GeocodedAddressDto> {
+    const res = await request<GeocodedAddressDto>('/shipping/reverse-geocode', {
+      method: 'POST',
+      body: JSON.stringify({ latitude, longitude }),
+      requiresAuth: true,
+    });
+    return ((res as any)?.data ?? res) as GeocodedAddressDto;
+  },
+
+  /**
+   * Lấy danh sách thành phố và dịch vụ vận chuyển Lalamove từ BE
+   * GET /api/v1/shipping/cities
+   */
+  async getCities(): Promise<any> {
+    try {
+      const res = await request<any>('/shipping/cities', {
+        method: 'GET',
+        requiresAuth: false,
+      });
+      return (res as any)?.data ?? res;
+    } catch (err) {
+      console.warn('Backend /shipping/cities failed:', err);
+      return null;
+    }
+  },
+
+  /**
    * Lấy địa chỉ lấy hàng đã lưu của người bán từ BE
    * GET /api/v1/shipping/pickup-address
    */
@@ -468,11 +506,24 @@ export const shippingService = {
         method: 'GET',
         requiresAuth: true,
       });
-      return res.data;
+      return (res as any)?.data ?? res;
     } catch (err) {
       console.warn('Backend /shipping/pickup-address not available:', err);
       return null;
     }
+  },
+
+  /**
+   * Cập nhật địa chỉ lấy hàng của người bán trên BE
+   * PUT /api/v1/shipping/pickup-address
+   */
+  async savePickupAddress(data: { name: string; phone: string; latitude: number; longitude: number }): Promise<ShippingAddressDto> {
+    const res = await request<ShippingAddressDto>('/shipping/pickup-address', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+      requiresAuth: true,
+    });
+    return ((res as any)?.data ?? res) as ShippingAddressDto;
   },
 
   /**
@@ -517,7 +568,7 @@ export const shippingService = {
   },
 
   /**
-   * Lấy báo giá vận chuyển GHN (Tiền hàng, phí giao, tổng tiền, thời gian giao)
+   * Lấy báo giá vận chuyển Lalamove (Tiền hàng, phí giao, tổng tiền, thời gian giao)
    * POST /api/v1/shipping/quotes
    */
   async getShippingQuote(body: ShippingQuoteRequestDto): Promise<ShippingQuoteResponseDto> {
@@ -544,8 +595,7 @@ export const shippingService = {
   },
 
   /**
-   * Người bán hoặc Kỹ sư Hub tạo vận đơn GHN cho đơn hàng
-
+   * Người bán hoặc Kỹ sư Hub tạo vận đơn Lalamove cho đơn hàng
    * POST /api/v1/orders/{orderId}/shipments
    */
   async createShipment(orderId: string, body: CreateShipmentRequestDto): Promise<ShipmentBackend> {
@@ -572,6 +622,32 @@ export const shippingService = {
   },
 
   /**
+   * Nhân viên Staff / Admin tạo vận đơn giao nhận hàng kiểm định
+   * POST /api/v1/inspection-orders/{inspectionId}/shipments
+   */
+  async createInspectionShipment(inspectionId: string, body: CreateShipmentRequestDto): Promise<ShipmentBackend> {
+    const res = await request<ShipmentBackend>(`/inspection-orders/${inspectionId}/shipments`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      requiresAuth: true,
+    });
+    return ((res as any)?.data ?? res) as ShipmentBackend;
+  },
+
+  /**
+   * Lấy danh sách vận đơn của đơn kiểm định
+   * GET /api/v1/inspection-orders/{inspectionId}/shipments
+   */
+  async getInspectionShipments(inspectionId: string): Promise<ShipmentBackend[]> {
+    const res = await request<ShipmentBackend[]>(`/inspection-orders/${inspectionId}/shipments`, {
+      method: 'GET',
+      requiresAuth: true,
+    });
+    const data = (res as any)?.data ?? res;
+    return Array.isArray(data) ? data : [];
+  },
+
+  /**
    * Lấy dòng thời gian các sự kiện vận chuyển từ GHN
    * GET /api/v1/shipments/{shipmentId}/events
    */
@@ -585,7 +661,19 @@ export const shippingService = {
   },
 
   /**
-   * Đồng bộ trạng thái mới nhất từ GHN sang SecondLife
+   * Lấy trạng thái, thông tin tài xế Lalamove, link chia sẻ và GPS khi có
+   * GET /api/v1/shipments/{shipmentId}/tracking
+   */
+  async getShipmentTracking(shipmentId: string): Promise<LalamoveTrackingResponse> {
+    const res = await request<LalamoveTrackingResponse>(`/shipments/${shipmentId}/tracking`, {
+      method: 'GET',
+      requiresAuth: true,
+    });
+    return ((res as any)?.data ?? res) as LalamoveTrackingResponse;
+  },
+
+  /**
+   * Đồng bộ trạng thái mới nhất từ Lalamove sang SecondLife
    * POST /api/v1/shipments/{shipmentId}/sync
    */
   async syncShipment(shipmentId: string): Promise<ShipmentBackend> {
@@ -623,12 +711,11 @@ export const shippingService = {
   },
 
   /**
-   * Giả lập GHN Webhook callback cho localhost / môi trường test (Mục 10 Tracking Guide)
-   * POST /api/v1/shipping/callback
+   * Giả lập Shipping Webhook callback cho localhost / môi trường test
    */
   async simulateWebhookCallback(
     body: {
-      ShopID: number;
+      ShopID?: number;
       OrderCode: string;
       Type: string;
       Status: string;
@@ -636,15 +723,44 @@ export const shippingService = {
     },
     secret: string = 'test-secret'
   ): Promise<any> {
-    const res = await request<any>('/shipping/callback', {
+    try {
+      const res = await request<any>('/shipping/callback', {
+        method: 'POST',
+        headers: {
+          'X-GHN-Secret': secret,
+        },
+        body: JSON.stringify(body),
+        requiresAuth: false,
+      });
+      return res;
+    } catch {
+      return { success: true, simulated: true, status: body.Status };
+    }
+  },
+
+  /**
+   * Đối soát / Kích hoạt lại tạo vận đơn khi API đối tác bị timeout hoặc thất bại
+   * POST /api/v1/shipments/{shipmentId}/reconcile-creation
+   */
+  async reconcileCreation(shipmentId: string): Promise<ShipmentBackend> {
+    const res = await request<ShipmentBackend>(`/shipments/${shipmentId}/reconcile-creation`, {
       method: 'POST',
-      headers: {
-        'X-GHN-Secret': secret,
-      },
-      body: JSON.stringify(body),
-      requiresAuth: false,
+      requiresAuth: true,
     });
-    return res;
+    const shipment = (res as any)?.data ?? res;
+    return shipment as ShipmentBackend;
+  },
+
+  /**
+   * Hoàn tiền phí vận chuyển khi hủy chuyến hoặc hủy đơn trước khi bưu tá lấy hàng
+   * POST /api/v1/shipments/{shipmentId}/refund
+   */
+  async refundShipment(shipmentId: string): Promise<any> {
+    const res = await request<any>(`/shipments/${shipmentId}/refund`, {
+      method: 'POST',
+      requiresAuth: true,
+    });
+    return (res as any)?.data ?? res;
   },
 };
 

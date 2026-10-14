@@ -3,6 +3,7 @@ import { ShieldCheck, Sparkles, MapPin, Star, CheckCircle2 } from 'lucide-react'
 import { Listing, Language } from '../../types';
 import { formatVND } from '../../utils/translations';
 import { soundFx } from '../../utils/soundEffects';
+import { extractWardAndCity } from '../../utils/addressUtils';
 
 interface ProductCard3DProps {
   item: Listing;
@@ -21,6 +22,12 @@ export const ProductCard3D: React.FC<ProductCard3DProps> = ({
   const [rotateX, setRotateX] = useState(0);
   const [rotateY, setRotateY] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
+
+  const displayLocation =
+    extractWardAndCity(item.sellerAddress || item.location) ||
+    item.location ||
+    item.sellerAddress ||
+    (lang === 'vi' ? 'Chưa cập nhật địa chỉ' : 'Address not updated');
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!cardRef.current) return;
@@ -89,10 +96,10 @@ export const ProductCard3D: React.FC<ProductCard3DProps> = ({
           {item.isInspectionGuaranteed && (
             <span
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-[#24263e]/85 text-white backdrop-blur-md shadow-xs"
-              title={lang === 'vi' ? 'Đã kiểm định tại SecondLife Hub' : 'Inspected at SecondLife Hub'}
+              title={lang === 'vi' ? 'Đã quét AI và kiểm duyệt bởi Ban quản trị' : 'AI Scanned & Admin Verified'}
             >
-              <ShieldCheck className="w-2.5 h-2.5 text-white" />
-              <span>Hub Verified</span>
+              <Sparkles className="w-2.5 h-2.5 text-amber-300" />
+              <span>AI Verified</span>
             </span>
           )}
         </div>
@@ -106,9 +113,9 @@ export const ProductCard3D: React.FC<ProductCard3DProps> = ({
             <span className="font-bold text-[#24263e] uppercase tracking-wide truncate max-w-[110px]">
               {item.brand} • {item.purchaseYear}
             </span>
-            <span className="flex items-center gap-0.5 text-[#24263e]/70 font-medium shrink-0 max-w-[130px] truncate" title={item.location}>
+            <span className="flex items-center gap-0.5 text-[#24263e]/70 font-medium shrink-0 max-w-[130px] truncate" title={item.sellerAddress || item.location || displayLocation}>
               <MapPin className="w-2.5 h-2.5 text-[#24263e] shrink-0" />
-              <span className="truncate">{item.location}</span>
+              <span className="truncate">{displayLocation}</span>
             </span>
           </div>
 
@@ -138,18 +145,11 @@ export const ProductCard3D: React.FC<ProductCard3DProps> = ({
 
         {/* Price & Seller Info */}
         <div className="pt-2 border-t border-slate-100 space-y-1.5">
-          {/* Row 1: Giá bán nổi bật */}
+          {/* Row 1: Giá bán nổi bật - Chỉ hiển thị 1 giá bán duy nhất */}
           <div className="flex items-baseline justify-between gap-1.5">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-sm sm:text-base font-black text-[#c34c36] leading-none">
-                {formatVND(item.priceVnd)}
-              </span>
-              {item.originalPriceVnd && item.originalPriceVnd > item.priceVnd && (
-                <span className="line-through text-[10px] text-[#24263e]/40 font-medium">
-                  {formatVND(item.originalPriceVnd)}
-                </span>
-              )}
-            </div>
+            <span className="text-sm sm:text-base font-black text-[#c34c36] leading-none">
+              {formatVND(item.priceVnd)}
+            </span>
             <span className="text-[9px] font-medium text-[#24263e]/60 bg-[#faf8f5] px-1.5 py-0.5 rounded border border-slate-200">
               {lang === 'vi' ? 'Giá bán' : 'Price'}
             </span>

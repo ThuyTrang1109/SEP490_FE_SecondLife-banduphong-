@@ -1,4 +1,4 @@
-export type UserRole = 'buyer' | 'seller' | 'inspector' | 'staff' | 'admin';
+export type UserRole = 'buyer' | 'seller' | 'inspector' | 'staff' | 'admin' | 'inspection_center';
 
 export type Language = 'vi' | 'en';
 
@@ -14,7 +14,7 @@ export type ItemCategory =
   | 'Lò vi sóng & Lò nướng'
   | 'Nồi cơm & Bếp từ';
 
-export type ListingStatus = 'active' | 'reserved' | 'sold' | 'draft' | 'RESERVED';
+export type ListingStatus = 'active' | 'pending' | 'reserved' | 'sold' | 'draft' | 'RESERVED';
 
 export interface PhotoChecklist {
   front: string;
@@ -48,6 +48,7 @@ export interface Listing {
   category: ItemCategory;
   brand: string;
   model: string;
+  modelCode?: string;
   purchaseYear: number;
   priceVnd: number;
   originalPriceVnd?: number;
@@ -57,6 +58,8 @@ export interface Listing {
   location: string;
   sellerId: string;
   sellerName: string;
+  sellerAddress?: string;
+  sellerAvatarUrl?: string;
   sellerAvatar?: string;
   sellerRating: number;
   sellerCompletedOrders: number;
@@ -108,6 +111,7 @@ export interface InspectionReport {
   centerName: string;
   inspectorName: string;
   inspectedAt: string;
+  completedAt?: string;
   verdict: 'PASS' | 'FAIL';
   detectedGrade: ConditionGrade;
   conditionScore: number; // 0 - 100
@@ -121,7 +125,7 @@ export interface InspectionReport {
 export interface ShippingLeg {
   id: string;
   legType: 'SELLER_TO_CENTER' | 'CENTER_TO_BUYER' | 'DIRECT' | string;
-  carrier: 'GHTK' | 'GHN' | 'GHN Express' | string;
+  carrier: 'Lalamove' | 'GHTK' | 'GHN' | 'GHN Express' | string;
   trackingNumber: string;
   status: 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED' | string;
   origin: string;
@@ -144,6 +148,7 @@ export interface EscrowOrder {
   buyerAddress: string;
   sellerId: string;
   sellerName: string;
+  sellerAvatarUrl?: string;
   itemPriceVnd: number;
   inspectionFeeVnd: number;
   shippingFeeVnd: number;
@@ -151,6 +156,12 @@ export interface EscrowOrder {
   totalPaidVnd: number;
   escrowStatus: EscrowStatus;
   hasInspectionService: boolean;
+  inspectionCenterId?: string;
+  inspectionCenterName?: string;
+  inspectionMethod?: 'AT_CENTER' | 'AT_HOME';
+  inspectionFeeSplit?: 'BUYER_100' | 'SPLIT_50_50' | 'SELLER_100';
+  buyerInspectionFeeVnd?: number;
+  sellerInspectionFeeVnd?: number;
   inspectionReport?: InspectionReport;
   shippingLegs: ShippingLeg[];
   inspectionWindowEndsAt?: string;
@@ -172,6 +183,7 @@ export interface ProductReview {
   productName: string;
   sellerId: string;
   sellerName: string;
+  sellerAvatarUrl?: string;
   buyerId: string;
   buyerName: string;
   buyerAvatar?: string;
@@ -191,6 +203,7 @@ export interface ProductReview {
 export interface SellerTrustProfile {
   sellerId: string;
   sellerName: string;
+  sellerAvatarUrl?: string;
   trustScore: number; // 0 - 100
   tier: 'Kim Cương' | 'Bạch Kim' | 'Vàng' | 'Bạc';
   rating: number;
@@ -211,6 +224,7 @@ export interface DisputeCase {
   buyerName: string;
   sellerId: string;
   sellerName: string;
+  sellerAvatarUrl?: string;
   reason: 'NOT_AS_DESCRIBED' | 'DAMAGE_IN_TRANSIT' | 'AUTHENTICITY_CLAIM' | 'MISSING_ACCESSORIES';
   description: string;
   buyerEvidencePhotos: string[];
@@ -234,6 +248,20 @@ export interface ChatMessage {
   negotiationId?: string;
   safetyWarning?: string;
   isUnsent?: boolean;
+  isInspectionProposal?: boolean;
+  inspectionProposal?: SystemInspectionProposalPayload;
+}
+
+export interface SystemInspectionProposalPayload {
+  type: 'INSPECTION_PROPOSAL';
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED';
+  method: 'AT_CENTER' | 'AT_HOME';
+  feeSplit: 'BUYER_100' | 'SPLIT_50_50' | 'SELLER_100';
+  estimatedFeeVnd: number;
+  proposedByRole: 'buyer' | 'seller';
+  proposalId?: string;
+  orderId?: string;
+  note?: string;
 }
 
 export interface InspectionCenter {
@@ -286,6 +314,7 @@ export interface UserProfile {
     accountNumber: string;
     accountHolder: string;
   };
+  productTypes?: string;
 }
 
 export interface TopupPackage {
@@ -296,6 +325,7 @@ export interface TopupPackage {
   priceVnd?: number;
   postCredits?: number;
   chatCredits?: number;
+  valuationCredits?: number;
   creditPoints?: number;
   bonusPoints?: number;
   description?: string;
@@ -306,9 +336,9 @@ export interface TopupPackage {
 export interface UserCredit {
   id?: string;
   userId?: string;
-  balance?: number;
-  postCredits?: number;
-  chatCredits?: number;
+  postCredits: number;
+  valuationCredits: number;
+  chatCredits: number;
   updatedAt?: string;
 }
 
@@ -422,21 +452,34 @@ export interface OrderBackend {
 }
 
 // ==========================================
-// 4. GHN Shipping & Tracking Types
+// 4. Lalamove Shipping & Tracking Types
 // ==========================================
+export interface GeocodedAddressDto {
+  address: string;
+  latitude: number;
+  longitude: number;
+  city: string;
+  countryCode: string;
+  placeId?: string;
+}
+
 export interface ShippingQuoteDeliveryAddressDto {
   name: string;
   phone: string;
-  address: string;
-  provinceName: string;
-  wardName: string;
-  newAddress: boolean;
+  latitude: number;
+  longitude: number;
+  address?: string;
+  // Legacy fields kept for backward compatibility if needed
+  provinceName?: string;
+  wardName?: string;
+  newAddress?: boolean;
 }
 
 export interface ShippingQuoteRequestDto {
   postId: string;
   negotiationId?: string;
   deliveryAddress: ShippingQuoteDeliveryAddressDto;
+  serviceType?: string;
 }
 
 export interface ShippingQuoteResponseDto {
@@ -448,6 +491,9 @@ export interface ShippingQuoteResponseDto {
   insuranceValue?: number;
   expiresAt: string;
   expectedDeliveryTime?: string;
+  carrier?: string;
+  serviceType?: string;
+  providerQuotationId?: string;
 }
 
 export interface CreateShipmentRequestDto {
@@ -465,7 +511,7 @@ export interface ShipmentBackend {
   leg: string;
   orderCode: string | null;
   status: string; // PENDING, READY_TO_PICK, PICKING, PICKED, DELIVERING, DELIVERED, CANCELLED
-  providerStatus: string | null; // GHN status: ready_to_pick, picking, picked, storing, transporting, delivering, delivered, cancel
+  providerStatus: string | null; // Lalamove status: ASSIGNING_DRIVER, ON_GOING, PICKED_UP, COMPLETED, CANCELED, REJECTED, EXPIRED
   quotedFee?: number;
   actualFee?: number;
   expectedDeliveryTime: string | null;
@@ -473,6 +519,8 @@ export interface ShipmentBackend {
   reason?: string | null;
   lastError?: string | null;
   podUrl?: string | null;
+  driverId?: string | null;
+  shareLink?: string | null;
 }
 
 export interface ShipmentEventBackend {
@@ -486,5 +534,104 @@ export interface ShipmentEventBackend {
   payload?: string;
 }
 
+export interface LalamoveDriverCoordinates {
+  lat: string | number;
+  lng: string | number;
+  updatedAt?: string;
+}
 
+export interface LalamoveDriverInfo {
+  name?: string;
+  phone?: string;
+  plateNumber?: string;
+  photo?: string;
+  coordinates?: LalamoveDriverCoordinates | null;
+}
+
+export interface LalamoveTrackingResponse {
+  status?: string;
+  providerStatus?: string;
+  locationStatus: 'AVAILABLE' | 'UNAVAILABLE';
+  driver?: LalamoveDriverInfo | null;
+  shareLink?: string | null;
+  expectedDeliveryTime?: string | null;
+}
+
+export interface SystemWalletData {
+  id: string;
+  currency: string;
+  heldBalance: number;
+  shippingBalance: number;
+  revenueBalance: number;
+  totalBalance: number;
+  updatedAt: string;
+}
+
+export interface SystemWalletTransaction {
+  id: number;
+  orderId: string;
+  type: 'OPENING_BALANCE' | 'PAYMENT_HOLD' | 'SETTLEMENT' | 'REFUND' | string;
+  heldDelta: number;
+  shippingDelta: number;
+  revenueDelta: number;
+  heldBalanceAfter: number;
+  shippingBalanceAfter: number;
+  revenueBalanceAfter: number;
+  createdAt: string;
+}
+
+export interface SystemWalletTransactionsPage {
+  items: SystemWalletTransaction[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  isLast: boolean;
+}
+
+export interface OrderSettlementDTO {
+  settlementId?: string;
+  orderId?: string;
+  commissionSnapshotId?: string;
+  commissionBase: number;
+  rawCommission: number;
+  platformCommission: number;
+  sellerPayout: number;
+  shippingFee: number;
+  currency: string;
+  roundingMode?: string;
+  settledAt: string;
+}
+
+export interface OrderCommissionDTO {
+  orderId?: string;
+  commissionBase?: number;
+  ratePercent?: number;
+  minFee?: number;
+  maxFee?: number;
+  platformCommission?: number;
+  ruleCode?: string;
+  status?: string;
+}
+
+export interface StaffListingItemDTO {
+  postId: string;
+  categoryId?: string | null;
+  itemId?: string | null;
+  title: string;
+  description: string;
+  itemCondition?: string;
+  imageUrl?: string;
+  imageUrls: string[];
+  price: number;
+  aiSuggestedPrice?: number | null;
+  status: string;
+  rejectionReason?: string | null;
+  listingCreditCharged?: boolean;
+  aiDescription?: string | null;
+  descriptionAccepted?: boolean;
+  reviewReason?: string | null;
+  duplicateMatches?: string[];
+}
+export * from './notification';
 

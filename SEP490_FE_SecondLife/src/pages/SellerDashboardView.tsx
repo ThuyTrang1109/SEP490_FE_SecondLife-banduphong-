@@ -20,13 +20,14 @@ import {
   Coins,
   History
 } from 'lucide-react';
-import { Listing, Language } from '../types';
+import { Listing, Language, UserProfile } from '../types';
 import { formatVND } from '../utils/translations';
 import { sellerService, SellerVerificationResponseDto } from '../services/sellerService';
-import { sellerCreditService, CreditBalanceResponseDto, CreditLedgerResponseDto } from '../services/sellerCreditService';
+import { sellerCreditService, CreditBalanceResponseDto, CreditLedgerResponseDto, CreditPurchaseResponseDto } from '../services/sellerCreditService';
 import { mediaService } from '../services/mediaService';
 import { postService } from '../services/postService';
 import { SellerReviewsModal } from '../components/modals/SellerReviewsModal';
+import { extractWardAndCity, getSavedSellerAddress } from '../utils/addressUtils';
 
 interface SellerDashboardViewProps {
   listings: Listing[];
@@ -34,6 +35,7 @@ interface SellerDashboardViewProps {
   onCreateListing: (draft?: Listing) => void;
   onViewOrders?: () => void;
   lang: Language;
+  currentUser?: UserProfile | null;
 }
 
 export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
@@ -42,15 +44,26 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
   onCreateListing,
   onViewOrders,
   lang,
+  currentUser,
 }) => {
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'active' | 'pending' | 'rejected' | 'reserved' | 'sold'>('ALL');
   const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
-  const [bankName, setBankName] = useState('Vietcombank - Ngân hàng TMCP Ngoại Thương Việt Nam');
-  const [accountNumber, setAccountNumber] = useState('10298839201');
-  const [accountHolder, setAccountHolder] = useState('NGUYEN MINH TUAN');
-  const [payoutAmount, setPayoutAmount] = useState<number>(42800000);
+  const [bankName, setBankName] = useState(currentUser?.bankAccount?.bankName || '');
+  const [accountNumber, setAccountNumber] = useState(currentUser?.bankAccount?.accountNumber || '');
+  const [accountHolder, setAccountHolder] = useState(currentUser?.bankAccount?.accountHolder || currentUser?.name || '');
+  const [payoutAmount, setPayoutAmount] = useState<number>(currentUser?.walletBalanceVnd ?? currentUser?.walletBalance ?? 0);
   const [payoutSuccessMsg, setPayoutSuccessMsg] = useState<string | null>(null);
   const [isSellerReviewsOpen, setIsSellerReviewsOpen] = useState(false);
+
+  useEffect(() => {
+    if (currentUser?.bankAccount) {
+      if (currentUser.bankAccount.bankName) setBankName(currentUser.bankAccount.bankName);
+      if (currentUser.bankAccount.accountNumber) setAccountNumber(currentUser.bankAccount.accountNumber);
+      if (currentUser.bankAccount.accountHolder) setAccountHolder(currentUser.bankAccount.accountHolder);
+    } else if (currentUser?.name && !accountHolder) {
+      setAccountHolder(currentUser.name);
+    }
+  }, [currentUser]);
 
   // Seller Verification State
   const [myVerification, setMyVerification] = useState<SellerVerificationResponseDto | null>(null);
@@ -66,6 +79,8 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
   const [creditBalance, setCreditBalance] = useState<CreditBalanceResponseDto | null>(null);
   const [isCreditLedgerOpen, setIsCreditLedgerOpen] = useState(false);
   const [creditLedgerItems, setCreditLedgerItems] = useState<CreditLedgerResponseDto[]>([]);
+  const [creditPurchases, setCreditPurchases] = useState<CreditPurchaseResponseDto[]>([]);
+  const [creditModalTab, setCreditModalTab] = useState<'ledger' | 'purchases'>('ledger');
   const [isLoadingLedger, setIsLoadingLedger] = useState(false);
 
   // Real Backend Posts State
@@ -96,12 +111,22 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
       const res = await postService.getMyPosts(0, 50);
       const posts = (res as any)?.content || (res as any)?.data || (Array.isArray(res) ? res : []);
       if (posts && posts.length > 0) {
+        const savedAddr = getSavedSellerAddress();
+        const currentSellerAddr = currentUser?.pickupAddress || currentUser?.address || savedAddr.address;
+        const currentSellerWard = currentUser?.wardName || currentUser?.ward || savedAddr.wardName;
+        const currentSellerProv = currentUser?.provinceName || currentUser?.province || savedAddr.provinceName;
+
         const mapped: Listing[] = posts.map((p: any) => {
           const rawImages: string[] = Array.isArray(p.imageUrls) && p.imageUrls.length > 0
             ? p.imageUrls
             : (p.imageUrl ? [p.imageUrl] : []);
           const fallbackImage = 'https://images.unsplash.com/photo-1584269600464-37b1b58a9fe7?auto=format&fit=crop&q=80&w=800';
           const primaryImage = rawImages[0] || fallbackImage;
+
+          // Xác định địa chỉ người bán
+          const rawPostAddr = p.sellerAddress || p.pickupAddress || p.user?.address || currentSellerAddr;
+          const loc = extractWardAndCity(rawPostAddr, currentSellerWard, currentSellerProv) || 'Hà Nội';
+          const sellerAddr = rawPostAddr || (currentSellerWard && currentSellerProv ? `${currentSellerWard}, ${currentSellerProv}` : loc);
 
           return {
             id: p.id || `post-${Date.now()}`,
@@ -115,9 +140,10 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
             conditionGrade: (p.itemCondition || 'Like New') as any,
             declaredConditionText: p.itemCondition || 'Tình trạng tốt',
             description: p.description || p.aiDescription || 'Đã qua thẩm định SecondLife.',
-            location: 'Việt Nam',
-            sellerId: p.user?.id || p.userId || 'me',
-            sellerName: p.user?.fullName || 'Tôi',
+            location: loc,
+            sellerAddress: sellerAddr,
+            sellerId: p.user?.id || p.userId || currentUser?.id || 'me',
+            sellerName: currentUser?.name || p.user?.fullName || p.user?.name || 'Tôi',
             sellerRating: 5.0,
             sellerCompletedOrders: 0,
             sellerVerified: true,
@@ -144,7 +170,16 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
     } finally {
       setIsLoadingPosts(false);
     }
-  }, []);
+  }, [
+    currentUser?.id,
+    currentUser?.name,
+    currentUser?.address,
+    currentUser?.pickupAddress,
+    currentUser?.ward,
+    currentUser?.wardName,
+    currentUser?.province,
+    currentUser?.provinceName,
+  ]);
 
   useEffect(() => {
     fetchSellerData();
@@ -154,11 +189,16 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
     setIsCreditLedgerOpen(true);
     setIsLoadingLedger(true);
     try {
-      const res = await sellerCreditService.getLedger(0, 30);
-      const items = (res as any)?.content || (res as any)?.data || (Array.isArray(res) ? res : []);
-      setCreditLedgerItems(items);
+      const [ledgerRes, purchasesRes] = await Promise.all([
+        sellerCreditService.getLedger(0, 30),
+        sellerCreditService.getPurchases(0, 30),
+      ]);
+      const ledgerItems = (ledgerRes as any)?.items || (ledgerRes as any)?.content || (ledgerRes as any)?.data?.items || (ledgerRes as any)?.data || (Array.isArray(ledgerRes) ? ledgerRes : []);
+      const purchaseItems = (purchasesRes as any)?.items || (purchasesRes as any)?.content || (purchasesRes as any)?.data?.items || (purchasesRes as any)?.data || (Array.isArray(purchasesRes) ? purchasesRes : []);
+      setCreditLedgerItems(ledgerItems);
+      setCreditPurchases(purchaseItems);
     } catch (err) {
-      console.warn('Lỗi lấy sổ cái credit:', err);
+      console.warn('Lỗi lấy dữ liệu credit:', err);
     } finally {
       setIsLoadingLedger(false);
     }
@@ -224,8 +264,8 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
     return l.status === filterStatus;
   });
 
-  const totalEarnings = 42800000;
-  const pendingEscrow = 18500000;
+  const totalEarnings = currentUser?.walletBalanceVnd ?? currentUser?.walletBalance ?? 0;
+  const pendingEscrow = currentUser?.escrowLockedVnd ?? 0;
 
   const handleRequestPayout = () => {
     setIsPayoutModalOpen(false);
@@ -323,7 +363,7 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
           <div className="flex items-center gap-4">
             <div className="relative">
               <img
-                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80"
+                src={currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200'}
                 alt="Seller Avatar"
                 className="w-16 h-16 rounded-2xl object-cover border-2 border-[#24263e]/20 shadow-md"
               />
@@ -338,24 +378,24 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl sm:text-2xl font-black text-[#24263e]">
-                  Nguyễn Minh Tuấn
+                  {currentUser?.name || currentUser?.email?.split('@')[0] || 'Người Bán SecondLife'}
                 </h1>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white/80 border border-[#24263e]/15 text-[#24263e] text-[11px] font-bold shadow-xs">
-                  <CheckCircle2 className="w-3 h-3 text-[#c34c36]" />
-                  {lang === 'vi' ? 'Đã xác minh eKYC' : 'eKYC Verified'}
+                  <CheckCircle2 className={`w-3 h-3 ${myVerification?.status === 'APPROVED' ? 'text-emerald-600' : 'text-amber-500'}`} />
+                  {myVerification?.status === 'APPROVED' ? (lang === 'vi' ? 'Đã xác minh eKYC' : 'eKYC Verified') : (lang === 'vi' ? 'Chưa xác minh eKYC' : 'Unverified')}
                 </span>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#24263e] text-white text-[11px] font-black shadow-xs">
                   <Award className="w-3 h-3 text-amber-300" />
-                  98 Điểm Uy Tín • Hạng Kim Cương
+                  {currentUser?.trustScore ? `${currentUser.trustScore} Điểm Uy Tín` : '100 Điểm Uy Tín'}
                 </span>
               </div>
               <p className="text-xs text-[#24263e]/80 mt-1 flex items-center gap-3 font-semibold flex-wrap">
                 <span className="flex items-center gap-1 text-[#24263e] font-bold">
                   <Star className="w-3.5 h-3.5 fill-[#c34c36] text-[#c34c36]" />
-                  {lang === 'vi' ? '4.9 / 5.0 (48 đánh giá)' : '4.9 / 5.0 (48 reviews)'}
+                  {currentUser?.sellerRating ? `${currentUser.sellerRating.toFixed(1)} / 5.0` : '5.0 / 5.0'}
                 </span>
                 <span>•</span>
-                <span>{lang === 'vi' ? '32 đơn thành công' : '32 successful orders'}</span>
+                <span>{filteredListings.filter((l) => l.status === 'sold').length} {lang === 'vi' ? 'đơn hoàn thành' : 'completed orders'}</span>
                 <span>•</span>
                 <span>{lang === 'vi' ? 'Tỷ lệ phản hồi 100%' : '100% response rate'}</span>
               </p>
@@ -429,16 +469,21 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
               <span>{lang === 'vi' ? 'Điểm Tín Dụng (Credits)' : 'Active Credits'}</span>
               <Coins className="w-4 h-4 text-amber-500" />
             </div>
-            <div className="flex items-baseline gap-2">
+            <div className="flex flex-wrap items-baseline gap-2">
               <span className="text-2xl font-black text-[#24263e]">
-                {creditBalance ? creditBalance.listing : 12}
+                {creditBalance ? creditBalance.postCredits : (currentUser as any)?.postCredits ?? 0}
               </span>
               <span className="text-xs font-bold text-slate-500">Đăng tin</span>
               <span className="text-slate-300">•</span>
               <span className="text-lg font-black text-emerald-600">
-                {creditBalance ? creditBalance.valuation : 5}
+                {creditBalance ? creditBalance.valuationCredits : (currentUser as any)?.valuationCredits ?? 0}
               </span>
               <span className="text-xs font-bold text-slate-500">Định giá</span>
+              <span className="text-slate-300">•</span>
+              <span className="text-lg font-black text-blue-600">
+                {creditBalance ? creditBalance.chatCredits : (currentUser as any)?.chatCredits ?? 0}
+              </span>
+              <span className="text-xs font-bold text-slate-500">Chat AI</span>
             </div>
             <div className="pt-1 flex items-center justify-between">
               <button
@@ -576,9 +621,14 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
                   <div className="text-sm font-extrabold text-[#24263e]">
                     {formatVND(item.priceVnd)}
                   </div>
-                  <div className="text-[11px] text-[#24263e]/70">
-                    {lang === 'vi' ? 'Độ mới: ' : 'Grade: '}
-                    <span className="font-semibold text-[#24263e]">{item.conditionGrade}</span>
+                  <div className="text-[11px] text-[#24263e]/70 flex items-center justify-between">
+                    <span>
+                      {lang === 'vi' ? 'Độ mới: ' : 'Grade: '}
+                      <span className="font-semibold text-[#24263e]">{item.conditionGrade}</span>
+                    </span>
+                    <span className="truncate max-w-[130px] text-slate-500 font-medium" title={item.sellerAddress || item.location}>
+                      📍 {item.location || item.sellerAddress || 'Chưa cập nhật'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -875,15 +925,39 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
               <div className="flex items-center gap-2">
                 <Coins className="w-5 h-5 text-amber-500" />
                 <h3 className="font-bold text-sm text-slate-900">
-                  Lịch Sử Biến Động Điểm Tín Dụng (Credit Ledger)
+                  Quản Lý Tín Dụng & Lịch Sử Nạp (Seller Credits)
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsCreditLedgerOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer"
+                className="text-slate-400 hover:text-slate-600 text-sm cursor-pointer p-1"
               >
                 ✕
+              </button>
+            </div>
+
+            {/* Sub-tab Switcher */}
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+              <button
+                onClick={() => setCreditModalTab('ledger')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  creditModalTab === 'ledger'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                Sổ Cái Biến Động ({creditLedgerItems.length})
+              </button>
+              <button
+                onClick={() => setCreditModalTab('purchases')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  creditModalTab === 'purchases'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                Lịch Sử Đơn Mua ({creditPurchases.length})
               </button>
             </div>
 
@@ -892,7 +966,7 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
                 <Loader2 className="w-6 h-6 animate-spin text-amber-500" />
                 <span className="text-xs">Đang tải lịch sử giao dịch credit...</span>
               </div>
-            ) : (
+            ) : creditModalTab === 'ledger' ? (
               <div className="overflow-x-auto max-h-96">
                 <table className="w-full text-left text-xs">
                   <thead>
@@ -939,6 +1013,59 @@ export const SellerDashboardView: React.FC<SellerDashboardViewProps> = ({
                       <tr>
                         <td colSpan={5} className="py-8 text-center text-slate-400">
                           Chưa có lịch sử giao dịch credit nào.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-96">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100 bg-slate-50 text-slate-600 text-[11px] font-bold">
+                      <th className="py-2.5 px-3">Mã đơn mua</th>
+                      <th className="py-2.5 px-3">Thời gian</th>
+                      <th className="py-2.5 px-3 text-center">Gói mua</th>
+                      <th className="py-2.5 px-3 text-right">Tổng tiền</th>
+                      <th className="py-2.5 px-3 text-right">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {creditPurchases.length > 0 ? (
+                      creditPurchases.map((purchase, idx) => (
+                        <tr key={purchase.id || idx} className="hover:bg-slate-50/60 transition">
+                          <td className="py-2.5 px-3 font-mono font-bold text-slate-900 text-[11px]">
+                            #{purchase.id.slice(0, 8)}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 text-[11px]">
+                            {purchase.createdAt ? new Date(purchase.createdAt).toLocaleString('vi-VN') : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="text-slate-700 font-bold">
+                              {purchase.snapshot?.listingQuantity || 0} tin • {purchase.snapshot?.valuationQuantity || 0} định giá
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-black text-[#c34c36]">
+                            {formatVND(purchase.snapshot?.finalFee || 0)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              purchase.status === 'PAID'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : purchase.status === 'FAILED' || purchase.status === 'EXPIRED'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {purchase.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400">
+                          Chưa có đơn hàng mua tín dụng nào.
                         </td>
                       </tr>
                     )}

@@ -20,6 +20,8 @@ import {
   ShoppingBag,
   ShieldCheck,
   Clock,
+  Search,
+  Coins,
 } from 'lucide-react';
 import { TopupPackage, UserCredit, UserWallet, DepositResponseDTO, UserProfile, UserRole, Language } from '../../types';
 import { topupService, walletService, sellerCreditService } from '../../services';
@@ -41,131 +43,13 @@ interface TopUpModalProps {
   lang?: Language;
 }
 
-const COMBO_PACKAGES: TopupPackage[] = [
-  {
-    id: 'combo-starter',
-    name: 'Combo Khởi Đầu (Starter)',
-    description: 'Thanh lý nhanh gọn đồ dùng gia đình. Bao gồm 5 bài đăng và 5 lượt AI định giá.',
-    postCredits: 5,
-    chatCredits: 5,
-    price: 55000,
-    discountPercentage: 27,
-    isPopular: false,
-  },
-  {
-    id: 'combo-pro',
-    name: 'Combo Nhà Bán Chuyên Nghiệp',
-    description: 'Gói bán chạy nhất! Tối ưu chi phí cho seller đăng bán thường xuyên, hỗ trợ AI không giới hạn.',
-    postCredits: 15,
-    chatCredits: 20,
-    price: 180000,
-    discountPercentage: 28,
-    isPopular: true,
-  },
-  {
-    id: 'combo-vip',
-    name: 'Combo Siêu Thương Nhân (VIP)',
-    description: 'Dành cho cửa hàng đồ gia dụng, đại lý điện máy cũ. Mức chiết khấu cao nhất hệ thống.',
-    postCredits: 50,
-    chatCredits: 60,
-    price: 520000,
-    discountPercentage: 35,
-    isPopular: false,
-  }
-];
 
-const SINGLE_PACKAGES: (TopupPackage & { singleType: 'listing' | 'valuation' })[] = [
-  // Gói lẻ Đăng bài (Listing credits only)
-  {
-    id: 'single-listing-1',
-    name: 'Gói Lẻ: 1 Lượt Đăng Bài',
-    description: 'Đăng ngay 1 sản phẩm lên Marketplace với bảo lãnh Escrow an toàn.',
-    postCredits: 1,
-    chatCredits: 0,
-    price: 10000,
-    discountPercentage: 0,
-    singleType: 'listing',
-  },
-  {
-    id: 'single-listing-5',
-    name: 'Gói Lẻ: 5 Lượt Đăng Bài',
-    description: 'Tiết kiệm 10% chi phí đăng bài trên sàn.',
-    postCredits: 5,
-    chatCredits: 0,
-    price: 45000,
-    discountPercentage: 10,
-    singleType: 'listing',
-  },
-  {
-    id: 'single-listing-10',
-    name: 'Gói Lẻ: 10 Lượt Đăng Bài',
-    description: 'Gói đăng tin được nhiều người bán lựa chọn nhất.',
-    postCredits: 10,
-    chatCredits: 0,
-    price: 80000,
-    discountPercentage: 20,
-    singleType: 'listing',
-    isPopular: true,
-  },
-  {
-    id: 'single-listing-25',
-    name: 'Gói Lẻ: 25 Lượt Đăng Bài',
-    description: 'Đăng tin số lượng lớn dành cho người bán chuyên nghiệp.',
-    postCredits: 25,
-    chatCredits: 0,
-    price: 185000,
-    discountPercentage: 26,
-    singleType: 'listing',
-  },
-  // Gói lẻ Định giá AI (Valuation credits only)
-  {
-    id: 'single-valuation-1',
-    name: 'Gói Lẻ: 1 Lượt Định Giá AI',
-    description: 'Định giá 1 sản phẩm chính xác dựa trên Machine Learning.',
-    postCredits: 0,
-    chatCredits: 1,
-    price: 5000,
-    discountPercentage: 0,
-    singleType: 'valuation',
-  },
-  {
-    id: 'single-valuation-5',
-    name: 'Gói Lẻ: 5 Lượt Định Giá AI',
-    description: 'Khảo sát giá thị trường cho 5 thiết bị trước khi đăng bán.',
-    postCredits: 0,
-    chatCredits: 5,
-    price: 20000,
-    discountPercentage: 20,
-    singleType: 'valuation',
-  },
-  {
-    id: 'single-valuation-15',
-    name: 'Gói Lẻ: 15 Lượt Định Giá AI',
-    description: 'Tiết kiệm 33% chi phí thẩm định giá thiết bị.',
-    postCredits: 0,
-    chatCredits: 15,
-    price: 50000,
-    discountPercentage: 33,
-    singleType: 'valuation',
-    isPopular: true,
-  },
-  {
-    id: 'single-valuation-30',
-    name: 'Gói Lẻ: 30 Lượt Định Giá AI',
-    description: 'Gói chuyên sâu dành cho người hay khảo sát định giá thiết bị đồ cũ.',
-    postCredits: 0,
-    chatCredits: 30,
-    price: 90000,
-    discountPercentage: 40,
-    singleType: 'valuation',
-  },
-];
 
 const PRESET_DEPOSIT_AMOUNTS = [50000, 100000, 200000, 500000, 1000000, 2000000];
 
-const getPkgName = (pkg?: TopupPackage | null) => pkg?.name || pkg?.packageName || 'Gói nạp Xu';
-const getPkgPrice = (pkg?: TopupPackage | null) => Number(pkg?.price ?? pkg?.priceVnd ?? 50000);
-const getPkgCredits = (pkg?: TopupPackage | null) => Number(pkg?.postCredits ?? pkg?.creditPoints ?? 50);
+const getPkgName = (pkg?: TopupPackage | null) => pkg?.name || pkg?.packageName || 'Gói dịch vụ';
+const getPkgPrice = (pkg?: TopupPackage | null) => Number(pkg?.price ?? pkg?.priceVnd ?? 0);
+const getPkgCredits = (pkg?: TopupPackage | null) => Number(pkg?.postCredits ?? pkg?.creditPoints ?? 0);
 const getPkgBonus = (pkg?: TopupPackage | null) => Number(pkg?.chatCredits ?? pkg?.bonusPoints ?? 0);
 const getPkgTotalCredits = (pkg?: TopupPackage | null) => getPkgCredits(pkg) + getPkgBonus(pkg);
 
@@ -175,7 +59,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   currentUser,
   currentRole,
   currentCredit = 0,
-  userCredit: initialUserCredit,
+  userCredit: initialUserCredit = { postCredits: currentCredit || 10, valuationCredits: 0, chatCredits: 20 },
   walletBalance: initialWalletBalance,
   onCreditUpdated,
   onUserCreditUpdated,
@@ -207,6 +91,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   const [purchasing, setPurchasing] = useState<boolean>(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
   const [packageSuccess, setPackageSuccess] = useState<boolean>(false);
+  const [purchasedPackage, setPurchasedPackage] = useState<TopupPackage | null>(null);
 
   // Pending package to auto-purchase after deficit topup via VietQR
   const [pendingPackage, setPendingPackage] = useState<TopupPackage | null>(null);
@@ -219,7 +104,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   const [singleFilter, setSingleFilter] = useState<'all' | 'listing' | 'valuation'>('all');
 
   const [userCredit, setUserCredit] = useState<UserCredit>(
-    initialUserCredit || { postCredits: currentCredit || 10, chatCredits: 20 }
+    initialUserCredit || { postCredits: currentCredit || 10, valuationCredits: 0, chatCredits: 20 }
   );
 
   // History State
@@ -238,6 +123,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
       setDepositError(null);
       setPurchaseError(null);
       setPackageSuccess(false);
+      setPurchasedPackage(null);
       loadWallet();
       if (!isBuyerRole) {
         loadPackagesAndCredit();
@@ -260,11 +146,26 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     setTransactionsLoading(true);
     try {
       const data = await walletService.getTransactionHistory();
-      setTransactions(Array.isArray(data) ? data : []);
+      const sorted = (Array.isArray(data) ? data : []).sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
+      setTransactions(sorted);
     } catch (err) {
       console.error('Failed to load transaction history:', err);
     } finally {
       setTransactionsLoading(false);
+    }
+  };
+
+  const handleRefreshTopBar = () => {
+    loadWallet();
+    if (!isBuyerRole) {
+      loadPackagesAndCredit();
+    }
+    if (activeTab === 'history') {
+      loadHistory();
     }
   };
 
@@ -326,16 +227,17 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                   try {
                     await sellerCreditService.createPurchase({
                       listingQuantity: targetPkg.postCredits || 0,
-                      valuationQuantity: targetPkg.chatCredits || 0,
-                      aiChatQuantity: (targetPkg as any).aiChatCredits || 0,
+                      valuationQuantity: targetPkg.valuationCredits || 0,
+                      aiChatQuantity: targetPkg.chatCredits || 0,
                     });
                   } catch (err) {
                     console.warn('sellerCreditService.createPurchase auto notice:', err);
                   }
 
                   const updatedCredit: UserCredit = result || {
-                    postCredits: (userCredit.postCredits || 0) + (targetPkg.postCredits || 0),
-                    chatCredits: (userCredit.chatCredits || 0) + (targetPkg.chatCredits || 0),
+                    postCredits: (userCredit?.postCredits || 0) + (targetPkg.postCredits || 0),
+                    chatCredits: (userCredit?.chatCredits || 0) + (targetPkg.chatCredits || 0),
+                    valuationCredits: (userCredit?.valuationCredits || 0) + (targetPkg.valuationCredits || 0),
                   };
                   setUserCredit(updatedCredit);
                   if (onUserCreditUpdated) onUserCreditUpdated(updatedCredit);
@@ -350,7 +252,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                   }
 
                   setDepositRequest(null);
+                  setPendingPackage(null);
                   setSelectedPkg(targetPkg);
+                  setPurchasedPackage(targetPkg);
                   setPackageSuccess(true);
                   setActiveTab('packages');
                   return;
@@ -388,7 +292,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
 
         // Nếu đang có pendingPackage và số dư ví đã đủ
         if (depositRequest && depositRequest.status === 'PENDING' && pendingPackage && w.balance >= getPkgPrice(pendingPackage)) {
-          await handleConfirmPurchase(pendingPackage);
+          const pkgToActivate = pendingPackage;
+          setPendingPackage(null);
+          await handleConfirmPurchase(pkgToActivate);
           setDepositRequest(null);
         }
       }
@@ -403,6 +309,10 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   };
 
   const loadPackagesAndCredit = async () => {
+    if (isBuyerRole) {
+      setPackagesLoading(false);
+      return;
+    }
     setPackagesLoading(true);
     try {
       const [pkgsRes, aiCreditObj, sellerCreditObj] = await Promise.all([
@@ -413,34 +323,23 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
 
       const pkgsList = Array.isArray(pkgsRes) ? pkgsRes : (pkgsRes as any)?.data || [];
       const allPkgs: TopupPackage[] = [...pkgsList];
-      const existingNames = new Set(pkgsList.map((p: any) => (p.name || '').toLowerCase()));
-
-      for (const combo of COMBO_PACKAGES) {
-        if (!existingNames.has((combo.name || '').toLowerCase())) {
-          allPkgs.push(combo);
-        }
-      }
-
-      for (const single of SINGLE_PACKAGES) {
-        if (!existingNames.has((single.name || '').toLowerCase())) {
-          allPkgs.push(single);
-        }
-      }
 
       setPackages(allPkgs);
-      setSelectedPkg(allPkgs[0]);
+      if (allPkgs.length > 0) {
+        setSelectedPkg(allPkgs[0]);
+      }
 
       if (aiCreditObj || sellerCreditObj) {
         const mergedCredit: UserCredit = {
           ...userCredit,
-          postCredits: sellerCreditObj?.listing ?? (aiCreditObj as any)?.postCredits ?? userCredit.postCredits ?? 0,
-          chatCredits: (aiCreditObj as any)?.aiChatBalance ?? (aiCreditObj as any)?.chatCredits ?? userCredit.chatCredits ?? 0,
+          postCredits: sellerCreditObj?.postCredits ?? (aiCreditObj as any)?.postCredits ?? userCredit.postCredits ?? 0,
+          valuationCredits: sellerCreditObj?.valuationCredits ?? (aiCreditObj as any)?.valuationCredits ?? userCredit.valuationCredits ?? 0,
+          chatCredits: sellerCreditObj?.chatCredits ?? (aiCreditObj as any)?.aiChatBalance ?? (aiCreditObj as any)?.chatCredits ?? userCredit.chatCredits ?? 0,
         };
         setUserCredit(mergedCredit);
       }
     } catch {
-      setPackages([...COMBO_PACKAGES, ...SINGLE_PACKAGES]);
-      setSelectedPkg(COMBO_PACKAGES[0]);
+      setPackages([]);
     } finally {
       setPackagesLoading(false);
     }
@@ -512,6 +411,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
       const deficit = pkgPrice - currentBal;
       const neededAmount = Math.max(deficit, 10000);
       setPendingPackage(targetPkg);
+      setSelectedPkg(targetPkg);
       setDepositAmount(neededAmount);
       setCustomAmount(neededAmount.toLocaleString('vi-VN'));
       setCreatingDeposit(true);
@@ -532,38 +432,25 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     setPurchaseError(null);
     setPurchasing(true);
     try {
-      let result: any = null;
-      const isBackendUuid = targetPkg.id && targetPkg.id.length >= 32 && targetPkg.id.includes('-');
-      if (isBackendUuid) {
-        try {
-          result = await topupService.purchasePackage(targetPkg.id);
-        } catch (err: any) {
-          console.warn('topupService.purchasePackage fallback:', err);
-        }
+      if (!targetPkg.id) {
+        throw new Error('ID gói không hợp lệ.');
       }
+      
+      // Gọi API mua gói
+      await topupService.purchasePackage(targetPkg.id);
 
-      // Sync through sellerCreditService.createPurchase
-      try {
-        await sellerCreditService.createPurchase({
-          listingQuantity: targetPkg.postCredits || 0,
-          valuationQuantity: targetPkg.chatCredits || 0,
-          aiChatQuantity: (targetPkg as any).aiChatCredits || 0,
-        });
-      } catch (err) {
-        console.warn('sellerCreditService.createPurchase notice:', err);
-      }
-
-      const updatedCredit: UserCredit = result || {
-        postCredits: (userCredit.postCredits || 0) + (targetPkg.postCredits || 0),
-        chatCredits: (userCredit.chatCredits || 0) + (targetPkg.chatCredits || 0),
-      };
+      // Nạp thành công, lấy lại số dư thực tế từ BE
+      const updatedCredit = await topupService.getMyCredit();
       setUserCredit(updatedCredit);
+      
       if (onUserCreditUpdated) onUserCreditUpdated(updatedCredit);
       if (onCreditUpdated && typeof updatedCredit.postCredits === 'number') {
         onCreditUpdated(updatedCredit.postCredits);
       }
       // Re-fetch wallet balance after deduction
       await loadWallet();
+      setPurchasedPackage(targetPkg);
+      setSelectedPkg(targetPkg);
       setPackageSuccess(true);
       setPendingPackage(null);
     } catch (err: any) {
@@ -634,14 +521,17 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
             {!isBuyerRole ? (
               <div className="flex items-center gap-2 text-xs font-bold font-mono">
                 <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
-                  Tin: <span className="font-black text-[#c34c36]">{userCredit.postCredits ?? 0}</span>
+                  Tin: <span className="font-black text-[#c34c36]">{userCredit?.postCredits ?? 0}</span>
                 </span>
                 <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
-                  AI Chat: <span className="font-black text-[#c34c36]">{userCredit.chatCredits ?? 0}</span>
+                  AI Chat: <span className="font-black text-[#c34c36]">{userCredit?.chatCredits ?? 0}</span>
+                </span>
+                <span className="text-[#24263e] bg-white border border-[#24263e]/15 px-2.5 py-0.5 rounded-xl shadow-xs">
+                  Định giá: <span className="font-black text-[#c34c36]">{userCredit?.valuationCredits ?? 0}</span>
                 </span>
                 <button
-                  onClick={loadWallet}
-                  title="Làm mới số dư"
+                  onClick={handleRefreshTopBar}
+                  title="Làm mới số dư và lịch sử"
                   className="p-1 rounded-lg bg-white border border-[#24263e]/15 text-slate-600 hover:text-[#24263e] cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${walletLoading ? 'animate-spin' : ''}`} />
@@ -654,8 +544,8 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                   Bảo Lãnh Ký Quỹ Escrow
                 </span>
                 <button
-                  onClick={loadWallet}
-                  title="Làm mới số dư"
+                  onClick={handleRefreshTopBar}
+                  title="Làm mới số dư và lịch sử"
                   className="p-1 rounded-lg bg-white border border-[#24263e]/15 text-slate-600 hover:text-[#24263e] cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${walletLoading ? 'animate-spin' : ''}`} />
@@ -861,7 +751,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                         <CheckCircle2 className="w-7 h-7" />
                       </div>
                       <h4 className="text-base sm:text-lg font-black text-emerald-800">
-                        Nạp Tiền Thành Công!
+                        {pendingPackage 
+                          ? `Chuyển Tiền Thành Công - Đang Kích Hoạt Gói ${getPkgName(pendingPackage)}!`
+                          : 'Nạp Tiền Thành Công!'}
                       </h4>
                       <p className="text-xs text-emerald-700">
                         Hệ thống đã nhận được khoản thanh toán <strong>{formatVND(depositRequest.amount)}</strong>. Số dư ví của bạn hiện tại: <strong>{formatVND(wallet?.balance ?? 0)}</strong>.
@@ -1036,24 +928,73 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                     <CheckCircle2 className="w-10 h-10" />
                   </div>
 
-                  <div className="space-y-1">
-                    <h3 className="text-xl font-black text-emerald-900">Mua Gói Xu Thành Công!</h3>
-                    <p className="text-xs text-emerald-700 font-medium">
-                      Đã trừ{' '}
-                      <span className="font-black font-mono">
-                        {selectedPkg ? formatVND(getPkgPrice(selectedPkg)) : ''}
-                      </span>{' '}
-                      từ Ví và cộng{' '}
-                      <span className="font-black font-mono">
-                        +{selectedPkg?.postCredits || 0} tin &amp; +{selectedPkg?.chatCredits || 0} AI
-                      </span>{' '}
-                      vào tài khoản của bạn.
-                    </p>
-                  </div>
+                  {(() => {
+                    const activePkg = purchasedPackage || selectedPkg;
+                    const pkgName = getPkgName(activePkg);
+                    const pkgPrice = getPkgPrice(activePkg);
+                    const posts = Number(activePkg?.postCredits || 0);
+                    const chats = Number(activePkg?.chatCredits || 0);
+                    const valuations = Number(activePkg?.valuationCredits || 0);
+
+                    return (
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <h3 className="text-xl font-black text-emerald-900">
+                            Kích Hoạt Gói {pkgName} Thành Công!
+                          </h3>
+                          <p className="text-xs text-emerald-700 font-medium">
+                            Đã thanh toán{' '}
+                            <span className="font-black font-mono text-emerald-800">
+                              {formatVND(pkgPrice)}
+                            </span>{' '}
+                            từ Ví và cộng quyền lợi vào tài khoản của bạn.
+                          </p>
+                        </div>
+
+                        {/* Danh sách quyền lợi thực tế của gói vừa mua - Không hardcode các trường bằng 0 */}
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                          {posts > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-emerald-300 text-xs font-black text-emerald-800 shadow-2xs">
+                              <Tag className="w-3.5 h-3.5 text-[#c34c36]" />
+                              <span>+{posts} Lượt đăng tin</span>
+                            </span>
+                          )}
+                          {chats > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-emerald-300 text-xs font-black text-emerald-800 shadow-2xs">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                              <span>+{chats} Lượt Chat AI</span>
+                            </span>
+                          )}
+                          {valuations > 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-emerald-300 text-xs font-black text-emerald-800 shadow-2xs">
+                              <Search className="w-3.5 h-3.5 text-blue-500" />
+                              <span>+{valuations} Lượt định giá AI</span>
+                            </span>
+                          )}
+                          {posts === 0 && chats === 0 && valuations === 0 && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-emerald-300 text-xs font-bold text-emerald-800 shadow-2xs">
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Đã cộng đầy đủ quyền lợi của gói</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Tóm tắt số dư và quyền lợi sau khi mua */}
+                        <div className="pt-2 text-[11px] text-emerald-800/80 font-medium flex items-center justify-center gap-3">
+                          <span>Số dư ví còn lại: <strong className="font-mono text-emerald-900">{formatVND(wallet?.balance ?? 0)}</strong></span>
+                          <span>&bull;</span>
+                          <span>Tổng tin bài: <strong className="font-mono text-emerald-900">{userCredit?.postCredits ?? 0}</strong></span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="pt-3 flex items-center justify-center gap-3">
                     <button
-                      onClick={() => setPackageSuccess(false)}
+                      onClick={() => {
+                        setPackageSuccess(false);
+                        setPurchasedPackage(null);
+                      }}
                       className="px-5 py-2.5 rounded-xl text-xs font-bold bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-100 transition cursor-pointer"
                     >
                       Mua Tiếp Gói Khác
@@ -1139,6 +1080,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                               const pkgPrice = getPkgPrice(pkg);
                               const postCredits = Number(pkg.postCredits || 0);
                               const chatCredits = Number(pkg.chatCredits || 0);
+                              const valuationCredits = Number(pkg.valuationCredits || 0);
                               const isAffordable = currentWalletBalance >= pkgPrice;
 
                               return (
@@ -1158,7 +1100,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                       🔥 Phổ Biến Nhất
                                     </span>
                                   )}
-                                  {pkg.discountPercentage && pkg.discountPercentage > 0 && !pkg.isPopular && (
+                                  {(pkg.discountPercentage ?? 0) > 0 && !pkg.isPopular && (
                                     <span className="absolute -top-2.5 right-3 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider rounded-full bg-emerald-600 text-white shadow-xs">
                                       Giảm {pkg.discountPercentage}%
                                     </span>
@@ -1170,7 +1112,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                       <span className="text-base font-black text-[#c34c36] font-mono">
                                         {formatVND(pkgPrice)}
                                       </span>
-                                      {pkg.discountPercentage && pkg.discountPercentage > 0 && (
+                                      {(pkg.discountPercentage ?? 0) > 0 && (
                                         <span className="text-[10px] text-slate-400 line-through font-mono">
                                           {formatVND(Math.round(pkgPrice / (1 - pkg.discountPercentage / 100)))}
                                         </span>
@@ -1184,8 +1126,14 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                       </div>
                                       <div className="flex items-center gap-1.5 text-xs text-slate-800 font-bold">
                                         <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                                        <span>+{chatCredits} Lượt định giá AI</span>
+                                        <span>+{chatCredits} Lượt Chat AI</span>
                                       </div>
+                                      {valuationCredits > 0 && (
+                                        <div className="flex items-center gap-1.5 text-xs text-slate-800 font-bold">
+                                          <Search className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                          <span>+{valuationCredits} Lượt định giá AI</span>
+                                        </div>
+                                      )}
                                     </div>
 
                                     {pkg.description && (
@@ -1250,7 +1198,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                   }`}
                               >
                                 <Sparkles className="w-3 h-3" />
-                                <span>Chỉ Lượt Định Giá AI</span>
+                                <span>Chỉ Lượt Chat AI</span>
                               </button>
                             </div>
                           </div>
@@ -1262,7 +1210,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                               const pkgPrice = getPkgPrice(pkg);
                               const postCredits = Number(pkg.postCredits || 0);
                               const chatCredits = Number(pkg.chatCredits || 0);
+                              const valuationCredits = Number(pkg.valuationCredits || 0);
                               const isListingType = postCredits > 0;
+                              const isValuationType = valuationCredits > 0;
                               const isAffordable = currentWalletBalance >= pkgPrice;
 
                               return (
@@ -1277,7 +1227,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                       : 'bg-white border-slate-200 hover:border-[#24263e]/60 hover:shadow-xs'
                                     }`}
                                 >
-                                  {pkg.discountPercentage && pkg.discountPercentage > 0 && (
+                                  {(pkg.discountPercentage ?? 0) > 0 && (
                                     <span className="absolute -top-2 right-2 px-1.5 py-0.2 text-[9px] font-black rounded-md bg-emerald-600 text-white">
                                       -{pkg.discountPercentage}%
                                     </span>
@@ -1287,11 +1237,11 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                     <span
                                       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black ${isListingType
                                           ? 'bg-orange-100 text-orange-900'
-                                          : 'bg-indigo-100 text-indigo-900'
+                                          : isValuationType ? 'bg-blue-100 text-blue-900' : 'bg-indigo-100 text-indigo-900'
                                         }`}
                                     >
-                                      {isListingType ? <Tag className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
-                                      <span>{isListingType ? 'Đăng Bài' : 'Định Giá AI'}</span>
+                                      {isListingType ? <Tag className="w-3 h-3" /> : isValuationType ? <Search className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
+                                      <span>{isListingType ? 'Đăng Bài' : isValuationType ? 'Định Giá AI' : 'Chat AI'}</span>
                                     </span>
 
                                     <h4 className="font-black text-xs text-[#24263e] mt-2 line-clamp-1">{pkgName}</h4>
@@ -1302,8 +1252,10 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                                     <div className="mt-2 text-xs font-bold text-slate-700 bg-slate-50 p-2 rounded-xl border border-slate-100">
                                       {isListingType ? (
                                         <span>+{postCredits} Lượt đăng tin</span>
+                                      ) : isValuationType ? (
+                                        <span>+{valuationCredits} Lượt định giá AI</span>
                                       ) : (
-                                        <span>+{chatCredits} Lượt định giá AI</span>
+                                        <span>+{chatCredits} Lượt Chat AI</span>
                                       )}
                                     </div>
                                   </div>
@@ -1421,9 +1373,20 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
           {/* ============================================================== */}
           {activeTab === 'history' && (
             <div className="space-y-4 animate-fadeIn h-full flex flex-col">
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-5 h-5 text-[#c34c36]" />
-                <h4 className="font-black text-sm text-[#24263e]">Lịch sử nạp và giao dịch</h4>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-[#c34c36]" />
+                  <h4 className="font-black text-sm text-[#24263e]">Lịch sử nạp và giao dịch</h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadHistory}
+                  disabled={transactionsLoading}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-[#c34c36] bg-slate-100 hover:bg-slate-200 rounded-lg transition cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${transactionsLoading ? 'animate-spin' : ''}`} />
+                  <span>Làm mới</span>
+                </button>
               </div>
 
               <div className="bg-white rounded-2xl border border-[#24263e]/10 shadow-xs flex-1 overflow-hidden flex flex-col">
@@ -1441,31 +1404,69 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                   </div>
                 ) : (
                   <div className="overflow-y-auto max-h-[50vh] divide-y divide-[#24263e]/5">
-                    {transactions.map((tx) => (
-                      <div key={tx.id} className="p-4 hover:bg-slate-50 transition flex items-start gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex flex-shrink-0 items-center justify-center shadow-xs ${tx.type === 'DEPOSIT' ? 'bg-emerald-100 text-emerald-600' : tx.type === 'WITHDRAW' || tx.type === 'PAYMENT' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>
-                          {tx.type === 'DEPOSIT' ? <Wallet className="w-5 h-5" /> : tx.type === 'PAYMENT' ? <ShoppingBag className="w-5 h-5" /> : <RefreshCw className="w-5 h-5" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-1">
-                            <h5 className="text-xs sm:text-sm font-bold text-[#24263e] truncate">
-                              {tx.description || (tx.type === 'DEPOSIT' ? 'Nạp tiền vào ví' : tx.type === 'PAYMENT' ? 'Thanh toán' : 'Giao dịch khác')}
-                            </h5>
-                            <span className={`text-xs sm:text-sm font-black whitespace-nowrap ${tx.type === 'DEPOSIT' || tx.type === 'REFUND' ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {tx.type === 'DEPOSIT' || tx.type === 'REFUND' ? '+' : '-'}{formatVND(tx.amount)}
-                            </span>
+                    {transactions.map((tx) => {
+                      const isIncome = tx.type === 'DEPOSIT' || tx.type === 'REFUND' || tx.type === 'EARNING' || Number(tx.amount || 0) > 0;
+                      const absAmount = Math.abs(Number(tx.amount || 0));
+                      const isSuccess = !tx.status || tx.status === 'SUCCESS' || tx.status === 'COMPLETED';
+                      const isPending = tx.status === 'PENDING';
+
+                      return (
+                        <div key={tx.id} className="p-4 hover:bg-slate-50 transition flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex flex-shrink-0 items-center justify-center shadow-xs ${
+                            tx.type === 'DEPOSIT'
+                              ? 'bg-emerald-100 text-emerald-600'
+                              : tx.type === 'EARNING'
+                              ? 'bg-teal-100 text-teal-600'
+                              : tx.type === 'REFUND'
+                              ? 'bg-blue-100 text-blue-600'
+                              : 'bg-rose-100 text-rose-600'
+                          }`}>
+                            {tx.type === 'DEPOSIT' ? <Wallet className="w-5 h-5" /> :
+                             tx.type === 'EARNING' ? <Coins className="w-5 h-5" /> :
+                             tx.type === 'REFUND' ? <RefreshCw className="w-5 h-5" /> :
+                             tx.type === 'PAYMENT' ? <ShoppingBag className="w-5 h-5" /> :
+                             <RefreshCw className="w-5 h-5" />}
                           </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] sm:text-xs text-slate-500 font-medium">
-                              {new Date(tx.createdAt).toLocaleString('vi-VN')}
-                            </span>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${tx.status === 'SUCCESS' ? 'bg-emerald-100 text-emerald-700' : tx.status === 'PENDING' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                              {tx.status === 'SUCCESS' ? 'Thành công' : tx.status === 'PENDING' ? 'Chờ xử lý' : 'Thất bại'}
-                            </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                              <div>
+                                <h5 className="text-xs sm:text-sm font-bold text-[#24263e] truncate">
+                                  {tx.description || (
+                                    tx.type === 'DEPOSIT' ? 'Nạp tiền vào ví (VietQR)' :
+                                    tx.type === 'PAYMENT' ? 'Thanh toán mua gói / dịch vụ' :
+                                    tx.type === 'EARNING' ? 'Tiền bán hàng Escrow giải ngân' :
+                                    tx.type === 'REFUND' ? 'Hoàn tiền bảo lãnh Escrow' :
+                                    tx.type === 'WITHDRAW' ? 'Rút tiền về ngân hàng' : 'Giao dịch ví'
+                                  )}
+                                </h5>
+                                {tx.referenceId && (
+                                  <span className="text-[10px] text-slate-400 font-mono block">
+                                    Mã GD: #{String(tx.referenceId).substring(0, 8).toUpperCase()}
+                                  </span>
+                                )}
+                              </div>
+                              <span className={`text-xs sm:text-sm font-black whitespace-nowrap ${isIncome ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {isIncome ? '+' : '-'}{formatVND(absAmount)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between pt-0.5">
+                              <span className="text-[10px] sm:text-xs text-slate-500 font-medium">
+                                {tx.createdAt ? new Date(tx.createdAt).toLocaleString('vi-VN') : '—'}
+                              </span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                isSuccess
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : isPending
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-rose-100 text-rose-700'
+                              }`}>
+                                {isSuccess ? 'Thành công' : isPending ? 'Chờ xử lý' : 'Thất bại'}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

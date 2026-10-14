@@ -29,6 +29,8 @@ export interface SendMessageRequest {
   messageContent: string;
 }
 
+import { SystemInspectionProposalPayload } from '../types';
+
 // System negotiation offer structure if backend sends JSON inside "SYSTEM: ..."
 export interface SystemOfferPayload {
   type: 'OFFER';
@@ -37,13 +39,18 @@ export interface SystemOfferPayload {
   negotiationId: string;
 }
 
-export function parseSystemMessage(content: string): { isSystem: boolean; cleanText: string; offer?: SystemOfferPayload } {
+export function parseSystemMessage(content: string): {
+  isSystem: boolean;
+  cleanText: string;
+  offer?: SystemOfferPayload;
+  inspectionProposal?: SystemInspectionProposalPayload;
+} {
   if (!content) return { isSystem: false, cleanText: '' };
-
+  
   const trimmed = content.trim();
   if (trimmed.startsWith('SYSTEM:')) {
     const rawBody = trimmed.replace(/^SYSTEM:\s*/i, '').trim();
-    // Try parse as JSON (in case it is an OFFER payload)
+    // Try parse as JSON (OFFER or INSPECTION_PROPOSAL)
     try {
       const parsed = JSON.parse(rawBody);
       if (parsed && parsed.type === 'OFFER') {
@@ -51,6 +58,13 @@ export function parseSystemMessage(content: string): { isSystem: boolean; cleanT
           isSystem: true,
           cleanText: rawBody,
           offer: parsed as SystemOfferPayload
+        };
+      }
+      if (parsed && parsed.type === 'INSPECTION_PROPOSAL') {
+        return {
+          isSystem: true,
+          cleanText: rawBody,
+          inspectionProposal: parsed as SystemInspectionProposalPayload
         };
       }
     } catch {
@@ -112,8 +126,8 @@ class ChatWebSocketManager {
         console.log('[STOMP]', _str);
       },
       reconnectDelay: 5000,
-      heartbeatIncoming: 4000,
-      heartbeatOutgoing: 4000,
+      heartbeatIncoming: 0,
+      heartbeatOutgoing: 0,
       onConnect: () => {
         this.isConnecting = false;
         this.notifyStatus(true);
@@ -135,7 +149,7 @@ class ChatWebSocketManager {
         this.notifyStatus(false);
         const currentToken = getAccessToken();
         if (currentToken) {
-          request('/users/me', { requiresAuth: true }).catch(() => { });
+          request('/users/me', { requiresAuth: true }).catch(() => {});
         }
       },
       onWebSocketClose: () => {
@@ -144,7 +158,7 @@ class ChatWebSocketManager {
         // Ping to trigger apiClient.ts 401 interceptors in case the close was due to token expiration
         const currentToken = getAccessToken();
         if (currentToken) {
-          request('/users/me', { requiresAuth: true }).catch(() => { });
+          request('/users/me', { requiresAuth: true }).catch(() => {});
         }
       },
       onWebSocketError: (evt: Event) => {
@@ -152,7 +166,7 @@ class ChatWebSocketManager {
         console.error('[ChatWS] WebSocket error:', evt);
         const currentToken = getAccessToken();
         if (currentToken) {
-          request('/users/me', { requiresAuth: true }).catch(() => { });
+          request('/users/me', { requiresAuth: true }).catch(() => {});
         }
       },
     });
@@ -251,6 +265,22 @@ export const chatService = {
     return ((response as any)?.data !== undefined && (response as any)?.data !== null
       ? (response as any).data
       : response) as ChatRoomDto;
+  },
+
+  /**
+   * Lấy phòng chat hiện có (không tạo mới)
+   * GET /api/v1/chats/rooms?postId={postId}
+   */
+  async getRoom(postId: string): Promise<ChatRoomDto | null> {
+    try {
+      const response = await request<ChatRoomDto | null>(`/v1/chats/rooms?postId=${postId}`, {
+        method: 'GET',
+        requiresAuth: true,
+      });
+      return ((response as any)?.data !== undefined ? (response as any).data : response) as ChatRoomDto | null;
+    } catch {
+      return null;
+    }
   },
 
   /**

@@ -3,13 +3,11 @@ import {
   LayoutDashboard,
   FileCheck,
   AlertTriangle,
-  Image,
   ShieldCheck,
   Flag,
   Scale,
   RotateCcw,
   Wallet,
-  Truck,
   TrendingUp,
   UserX,
   LifeBuoy,
@@ -45,6 +43,7 @@ import {
 import { Listing, EscrowOrder, Language, UserProfile } from '../types';
 import { formatVND } from '../utils/translations';
 import { staffService, staffListingService, adminPostService, SellerVerificationResponseDto } from '../services';
+import { ListingComparisonModal } from '../components/staff/ListingComparisonModal';
 import logoImg from '../assets/logo.png';
 import { User, LogOut } from 'lucide-react';
 
@@ -61,13 +60,11 @@ interface StaffWorkspaceViewProps {
 type StaffTab =
   | 'overview'
   | 'review-listings'
-  | 'duplicate-images'
   | 'proof-possession'
   | 'reports-support'
   | 'disputes'
   | 'refund-requests'
   | 'payouts'
-  | 'inspections'
   | 'monitor-transactions'
   | 'restrict-users';
 
@@ -87,15 +84,19 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
+  // Trigger notice helper
+  const triggerNotice = (msg: string) => {
+    setActionNotice(msg);
+    setTimeout(() => setActionNotice(null), 4000);
+  };
+
   // Sub-tab filters
   const [listingFilter, setListingFilter] = useState<'ALL' | 'NORMAL' | 'SUSPICIOUS'>('ALL');
   const [reportSubTab, setReportSubTab] = useState<'REPORTS' | 'TICKETS'>('REPORTS');
-  const [inspectionSubTab, setInspectionSubTab] = useState<'COORDINATE' | 'RESULTS'>('COORDINATE');
 
   // Modals
   const [selectedListingModal, setSelectedListingModal] = useState<any | null>(null);
   const [selectedProofModal, setSelectedProofModal] = useState<any | null>(null);
-  const [selectedInspectionModal, setSelectedInspectionModal] = useState<any | null>(null);
   const [rejectReason, setRejectReason] = useState('Vi phạm giá niêm yết bất thường');
 
   // Request evidence form state
@@ -113,98 +114,62 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
   const [refundDecisionType, setRefundDecisionType] = useState<'FULL' | 'PARTIAL' | 'REJECT'>('FULL');
   const [refundNote, setRefundNote] = useState('');
 
+  // 1. Staff Listings & Moderation State
+  const [staffListings, setStaffListings] = useState<any[]>([]);
+  const [pendingReviewCount, setPendingReviewCount] = useState<number>(0);
+  const [selectedComparisonPostId, setSelectedComparisonPostId] = useState<string | null>(null);
+  const [isLoadingQueue, setIsLoadingQueue] = useState<boolean>(false);
+  const [queuePage, setQueuePage] = useState<number>(0);
+  const [queueTotalPages, setQueueTotalPages] = useState<number>(1);
 
+  const loadStaffQueue = async (page = 0) => {
+    setIsLoadingQueue(true);
+    try {
+      const res = await staffListingService.getStaffQueue(page, 10);
+      const items = res.content || [];
+      const mapped = items.map((it: any) => ({
+        id: it.postId || it.id,
+        title: it.title || 'Bài đăng cần duyệt',
+        category: it.category || 'Sản phẩm',
+        sellerName: it.sellerName || 'Người bán ' + (it.sellerId ? it.sellerId.slice(0, 8) : ''),
+        sellerRating: 5.0,
+        priceVnd: it.price || 0,
+        aiEstimatedPrice: it.aiSuggestedPrice || it.price || 0,
+        aiConfidence: 85,
+        isSuspicious: Boolean(it.duplicateMatches && it.duplicateMatches.length > 0),
+        duplicateMatches: it.duplicateMatches || [],
+        suspiciousReason: it.reviewReason || (it.duplicateMatches?.length ? `Phát hiện ${it.duplicateMatches.length} bài đối chiếu nghi trùng` : 'Chờ nhân viên duyệt'),
+        status: it.status || 'PENDING',
+        images: it.imageUrls?.length ? it.imageUrls : [it.imageUrl || 'https://images.unsplash.com/photo-1571175443880-49e1d25b2bc5?auto=format&fit=crop&w=400&q=80'],
+        description: it.description || 'Chưa có mô tả'
+      }));
+      setStaffListings(mapped);
+      setPendingReviewCount(res.totalElements ?? mapped.length);
+      setQueuePage(res.number ?? page);
+      setQueueTotalPages(res.totalPages ?? 1);
+    } catch (err) {
+      console.warn('Load staff queue error:', err);
+    } finally {
+      setIsLoadingQueue(false);
+    }
+  };
+
+  // Fetch count on mount for badge and load on activeTab
+  useEffect(() => {
+    staffListingService.getStaffQueue(0, 1)
+      .then((res) => {
+        setPendingReviewCount(res.totalElements ?? 0);
+      })
+      .catch((err) => console.warn('Get pending review badge count error:', err));
+  }, []);
 
   useEffect(() => {
-    if (activeTab === 'review-listings' || activeTab === 'duplicate-images') {
-      staffListingService.getQueue(0, 20)
-        .then((data: any) => {
-          const items = data?.items || data?.content || (Array.isArray(data) ? data : []);
-          if (items && items.length > 0) {
-            const mapped = items.map((it: any) => ({
-              id: it.postId || it.id,
-              title: it.title || 'Bài đăng cần duyệt',
-              category: it.category || 'Thiết bị điện tử',
-              sellerName: it.sellerName || 'Người bán ' + (it.sellerId?.slice(0, 8) || ''),
-              sellerRating: 5.0,
-              priceVnd: it.price || 0,
-              aiEstimatedPrice: it.price || 0,
-              aiConfidence: 85,
-              isSuspicious: Boolean(it.duplicateMatches?.length) || it.status === 'PENDING',
-              suspiciousReason: it.reviewReason || (it.duplicateMatches?.length ? `Phát hiện ${it.duplicateMatches.length} bài đối chiếu nghi trùng` : 'Chờ nhân viên duyệt'),
-              status: it.status || 'PENDING',
-              images: it.imageUrls?.length ? it.imageUrls : [it.imageUrl || 'https://images.unsplash.com/photo-1571175443880-49e1d25b2bc5?auto=format&fit=crop&w=400&q=80'],
-              description: it.description || 'Chưa có mô tả'
-            }));
-            setStaffListings(mapped);
-          } else {
-            adminPostService.getAdminPosts().then((res: any) => {
-              const adminItems = res?.content || res?.items || (Array.isArray(res) ? res : []);
-              if (adminItems && adminItems.length > 0) {
-                const mapped = adminItems.map((it: any) => ({
-                  id: it.id,
-                  title: it.title || 'Bài đăng cần duyệt',
-                  category: it.category || 'Thiết bị gia dụng',
-                  sellerName: it.user?.fullName || it.user?.email || 'Người bán',
-                  sellerRating: 5.0,
-                  priceVnd: it.price || 0,
-                  aiEstimatedPrice: it.aiSuggestedPrice || it.price || 0,
-                  aiConfidence: 90,
-                  isSuspicious: it.status === 'PENDING',
-                  suspiciousReason: it.rejectionReason || 'Chờ nhân viên thẩm định',
-                  status: it.status || 'PENDING',
-                  images: [it.imageUrl || 'https://images.unsplash.com/photo-1571175443880-49e1d25b2bc5?auto=format&fit=crop&w=400&q=80'],
-                  description: it.description || 'Chưa có mô tả'
-                }));
-                setStaffListings(mapped);
-              } else {
-                setStaffListings([]);
-              }
-            }).catch(() => setStaffListings([]));
-          }
-        })
-        .catch(() => {
-          adminPostService.getAdminPosts().then((res: any) => {
-            const adminItems = res?.content || res?.items || (Array.isArray(res) ? res : []);
-            if (adminItems && adminItems.length > 0) {
-              const mapped = adminItems.map((it: any) => ({
-                id: it.id,
-                title: it.title || 'Bài đăng cần duyệt',
-                category: it.category || 'Thiết bị gia dụng',
-                sellerName: it.user?.fullName || it.user?.email || 'Người bán',
-                sellerRating: 5.0,
-                priceVnd: it.price || 0,
-                aiEstimatedPrice: it.aiSuggestedPrice || it.price || 0,
-                aiConfidence: 90,
-                isSuspicious: it.status === 'PENDING',
-                suspiciousReason: it.rejectionReason || 'Chờ nhân viên thẩm định',
-                status: it.status || 'PENDING',
-                images: [it.imageUrl || 'https://images.unsplash.com/photo-1571175443880-49e1d25b2bc5?auto=format&fit=crop&w=400&q=80'],
-                description: it.description || 'Chưa có mô tả'
-              }));
-              setStaffListings(mapped);
-            } else {
-              setStaffListings([]);
-            }
-          }).catch(() => setStaffListings([]));
-        });
+    if (activeTab === 'review-listings') {
+      loadStaffQueue(0);
     }
   }, [activeTab]);
 
-  // Trigger notice helper
-  const triggerNotice = (msg: string) => {
-    setActionNotice(msg);
-    setTimeout(() => setActionNotice(null), 4000);
-  };
-
-  // 1. Staff Listings (Được tải trực tiếp từ Backend)
-  const [staffListings, setStaffListings] = useState<any[]>([]);
-
-  // 2. Duplicate Images & Fraud Alerts
-  const [duplicateCases, setDuplicateCases] = useState<any[]>([]);
-  const [fraudAlerts, setFraudAlerts] = useState<any[]>([]);
-
-  // 3. Proof of Possession (Xác minh sở hữu)
+  // 2. Proof of Possession (Xác minh sở hữu)
   const [proofList, setProofList] = useState<any[]>([]);
 
   // 4. Reports & Support Tickets
@@ -219,10 +184,6 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
 
   // 7. Payouts & Escrow Hold (Case có tranh chấp)
   const [payouts, setPayouts] = useState<any[]>([]);
-
-  // 8. Inspections (Điều phối & kết quả kiểm định)
-  const [inspectionOrders, setInspectionOrders] = useState<any[]>([]);
-  const [inspectionResults, setInspectionResults] = useState<any[]>([]);
 
   // 9. Realtime Transactions Monitoring
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -256,70 +217,53 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
       id: 'review-listings' as StaffTab,
       label: 'KIỂM DUYỆT TIN ĐĂNG',
       icon: FileCheck,
-      badge: staffListings.filter((l) => l.status === 'PENDING_REVIEW').length,
+      badge: pendingReviewCount,
       badgeColor: 'bg-[#24263e] text-white'
     },
     {
-      id: 'duplicate-images' as StaffTab,
-      label: 'ĐỐI SOÁT ẢNH & GIAN LẬN',
-      icon: Image,
-      badge: duplicateCases.length + fraudAlerts.filter((f) => f.status === 'PENDING').length,
-      badgeColor: 'bg-rose-600 text-white'
-    },
-    {
       id: 'proof-possession' as StaffTab,
-      label: 'XÁC MINH SỞ HỮU',
+      label: 'XÁC MINH SỞ HỮU ❌',
       icon: ShieldCheck,
       badge: proofList.filter((p) => p.status === 'PENDING').length,
       badgeColor: 'bg-amber-600 text-white'
-
     },
-
-
     {
       id: 'reports-support' as StaffTab,
-      label: 'BÁO CÁO & HỖ TRỢ',
+      label: 'BÁO CÁO & HỖ TRỢ ❌',
       icon: Flag,
       badge: reports.filter((r) => r.status === 'PENDING').length + supportTickets.filter((t) => t.status === 'OPEN').length,
       badgeColor: 'bg-indigo-600 text-white'
     },
     {
       id: 'disputes' as StaffTab,
-      label: 'TRANH CHẤP & BẰNG CHỨNG',
+      label: 'TRANH CHẤP & BẰNG CHỨNG ❌',
       icon: Scale,
       badge: disputes.length,
       badgeColor: 'bg-[#c34c36] text-white'
     },
     {
       id: 'refund-requests' as StaffTab,
-      label: 'YÊU CẦU HOÀN TIỀN',
+      label: 'YÊU CẦU HOÀN TIỀN ❌',
       icon: RotateCcw,
       badge: refundRequests.filter((r) => r.status === 'PENDING_APPROVAL').length,
       badgeColor: 'bg-rose-500 text-white'
     },
     {
       id: 'payouts' as StaffTab,
-      label: 'QUẢN LÝ THANH TOÁN & HOLD',
+      label: 'QUẢN LÝ THANH TOÁN & HOLD ❌',
       icon: Wallet,
       badge: payouts.filter((p) => p.status === 'HOLD').length,
       badgeColor: 'bg-amber-700 text-white'
     },
     {
-      id: 'inspections' as StaffTab,
-      label: 'ĐIỀU PHỐI KIỂM ĐỊNH HUB',
-      icon: Truck,
-      badge: inspectionOrders.length,
-      badgeColor: 'bg-emerald-700 text-white'
-    },
-    {
       id: 'monitor-transactions' as StaffTab,
-      label: 'GIÁM SÁT GIAO DỊCH',
+      label: 'GIÁM SÁT GIAO DỊCH ❌',
       icon: TrendingUp,
       badge: null
     },
     {
       id: 'restrict-users' as StaffTab,
-      label: 'CẢNH BÁO & HẠN CHẾ USER',
+      label: 'CẢNH BÁO & HẠN CHẾ USER ❌',
       icon: UserX,
       badge: restrictedUsers.length,
       badgeColor: 'bg-slate-700 text-white'
@@ -329,27 +273,27 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
   // Actions
   const handleApproveListing = async (id: string) => {
     try {
-      await staffListingService.approve(id).catch(() => adminPostService.approvePost(id));
-    } catch (err) {
+      await staffListingService.approveStaffListing(id);
+      triggerNotice(`Đã phê duyệt bài tin #${id} thành công!`);
+      loadStaffQueue(queuePage);
+    } catch (err: any) {
       console.warn('Backend approve post error:', err);
+      const msg = err?.message || 'Có lỗi khi phê duyệt bài tin.';
+      triggerNotice(`Lỗi duyệt tin #${id}: ${msg}`);
     }
-    setStaffListings((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, status: 'APPROVED' } : item))
-    );
-    triggerNotice(`Đã phê duyệt công khai bài tin #${id} lên Sàn giao dịch thành công!`);
     setSelectedListingModal(null);
   };
 
   const handleRejectListing = async (id: string) => {
     try {
-      await staffListingService.reject(id, rejectReason).catch(() => adminPostService.rejectPost(id, rejectReason));
-    } catch (err) {
+      await staffListingService.rejectStaffListing(id, rejectReason);
+      triggerNotice(`Đã từ chối duyệt bài tin #${id}. Lý do: ${rejectReason}`);
+      loadStaffQueue(queuePage);
+    } catch (err: any) {
       console.warn('Backend reject post error:', err);
+      const msg = err?.message || 'Có lỗi khi từ chối bài tin.';
+      triggerNotice(`Lỗi từ chối tin #${id}: ${msg}`);
     }
-    setStaffListings((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, status: 'REJECTED' } : item))
-    );
-    triggerNotice(`Đã từ chối duyệt bài tin #${id}. Lý do: ${rejectReason}`);
     setSelectedListingModal(null);
   };
 
@@ -601,6 +545,14 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
             </div>
           )}
 
+          {/* Unlinked Backend Notice Banner for Staff mock tabs */}
+          {!['overview', 'review-listings', 'duplicate-images'].includes(activeTab) && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2.5 text-xs font-bold text-rose-800 shadow-2xs animate-fadeIn">
+              <span className="w-5 h-5 rounded-full bg-rose-200 text-rose-800 flex items-center justify-center shrink-0 text-[11px]">❌</span>
+              <span>[GIAO DIỆN MOCK / CHƯA LIÊN KẾT BACKEND API] Mục nghiệp vụ này ({navItems.find(n => n.id === activeTab)?.label}) hiện đang chạy trên dữ liệu giả lập, Backend chưa có endpoint tương ứng.</span>
+            </div>
+          )}
+
           {/* ======================================================== */}
           {/* TAB 0: OVERVIEW                                          */}
           {/* ======================================================== */}
@@ -611,7 +563,7 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
                 <div className="bg-[#fce5da] text-[#24263e] border border-[#24263e]/15 rounded-xl shadow-xs overflow-hidden relative group">
                   <div className="p-4 sm:p-5 pr-14 relative z-10">
                     <div className="text-3xl sm:text-4xl font-black tracking-tight text-[#24263e]">
-                      {staffListings.filter((l) => l.status === 'PENDING_REVIEW').length}
+                      {pendingReviewCount}
                     </div>
                     <div className="text-xs uppercase font-black tracking-wider mt-1 text-[#24263e]/80">
                       TIN ĐĂNG CẦN DUYỆT
@@ -750,7 +702,7 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
                         </td>
                         <td className="py-3 px-4 text-center">
                           <button
-                            onClick={() => setActiveTab('duplicate-images')}
+                            onClick={() => setActiveTab('review-listings')}
                             className="px-2.5 py-1 rounded bg-[#24263e] hover:bg-[#c34c36] text-white text-[11px] font-bold transition cursor-pointer"
                           >
                             Xử lý
@@ -780,29 +732,41 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
-                      onClick={() => setListingFilter('ALL')}
-                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${listingFilter === 'ALL' ? 'bg-white text-[#24263e] shadow-xs font-black' : 'text-slate-600'
-                        }`}
+                      onClick={() => loadStaffQueue(queuePage)}
+                      disabled={isLoadingQueue}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition cursor-pointer"
+                      title="Tải lại danh sách"
                     >
-                      Tất cả ({staffListings.length})
+                      <RefreshCw className={`w-3.5 h-3.5 ${isLoadingQueue ? 'animate-spin' : ''}`} />
+                      <span>Làm mới</span>
                     </button>
-                    <button
-                      onClick={() => setListingFilter('SUSPICIOUS')}
-                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 ${listingFilter === 'SUSPICIOUS' ? 'bg-rose-700 text-white shadow-xs font-black' : 'text-rose-700'
-                        }`}
-                    >
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      Nghi Vấn ({staffListings.filter((l) => l.isSuspicious).length})
-                    </button>
-                    <button
-                      onClick={() => setListingFilter('NORMAL')}
-                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${listingFilter === 'NORMAL' ? 'bg-white text-[#24263e] shadow-xs font-black' : 'text-slate-600'
-                        }`}
-                    >
-                      Tin Bình Thường
-                    </button>
+
+                    <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                      <button
+                        onClick={() => setListingFilter('ALL')}
+                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${listingFilter === 'ALL' ? 'bg-white text-[#24263e] shadow-xs font-black' : 'text-slate-600'
+                          }`}
+                      >
+                        Tất cả ({staffListings.length})
+                      </button>
+                      <button
+                        onClick={() => setListingFilter('SUSPICIOUS')}
+                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 ${listingFilter === 'SUSPICIOUS' ? 'bg-rose-700 text-white shadow-xs font-black' : 'text-rose-700'
+                          }`}
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        Nghi Vấn ({staffListings.filter((l) => l.isSuspicious).length})
+                      </button>
+                      <button
+                        onClick={() => setListingFilter('NORMAL')}
+                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${listingFilter === 'NORMAL' ? 'bg-white text-[#24263e] shadow-xs font-black' : 'text-slate-600'
+                          }`}
+                      >
+                        Tin Bình Thường
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -833,180 +797,117 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredListings.map((item) => (
-                        <tr key={item.id} className="hover:bg-slate-50/70 transition">
-                          <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                            #{item.id}
-                          </td>
-                          <td className="py-3 px-3">
-                            <div className="flex items-center gap-2.5">
-                              <img src={item.images[0]} alt="" className="w-12 h-12 rounded-lg object-cover border shrink-0" />
-                              <div>
-                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-900 border border-amber-200">
-                                  {item.category}
-                                </span>
-                                <h4 className="font-bold text-slate-900 text-xs mt-0.5 line-clamp-1">{item.title}</h4>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-3 px-3 text-slate-800 whitespace-nowrap">
-                            <span className="font-bold">{item.sellerName}</span>
-                            <span className="text-[10px] text-amber-600 font-bold block">★ {item.sellerRating} / 5.0</span>
-                          </td>
-                          <td className="py-3 px-3 font-black text-[#c34c36] whitespace-nowrap">
-                            {formatVND(item.priceVnd)}
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <span className="font-bold text-slate-700">{formatVND(item.aiEstimatedPrice)}</span>
-                            <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-0.5">
-                              <span>Tin cậy:</span>
-                              <span className={`font-black ${item.aiConfidence < 60 ? 'text-rose-600' : 'text-emerald-700'}`}>
-                                {item.aiConfidence}%
-                              </span>
-                            </div>
-                          </td>
-                          <td className="py-3 px-3">
-                            {item.isSuspicious ? (
-                              <div className="space-y-0.5">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
-                                  <AlertTriangle className="w-3 h-3" />
-                                  NGHI VẤN CAO
-                                </span>
-                                <p className="text-[10px] text-rose-700 max-w-xs line-clamp-1">{item.suspiciousReason}</p>
-                              </div>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                <CheckCircle2 className="w-3 h-3" />
-                                An toàn
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                onClick={() => setSelectedListingModal(item)}
-                                className="px-2.5 py-1 rounded bg-slate-100 hover:bg-[#24263e] hover:text-white text-slate-800 text-[11px] font-bold transition cursor-pointer"
-                              >
-                                Xem Thẩm Định
-                              </button>
-                              <button
-                                onClick={() => handleApproveListing(item.id)}
-                                className="p-1 rounded bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white transition cursor-pointer"
-                                title="Duyệt bài ngay"
-                              >
-                                <Check className="w-4 h-4" />
-                              </button>
-                            </div>
+                      {filteredListings.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-slate-500 font-bold">
+                            {isLoadingQueue ? 'Đang tải hàng chờ duyệt...' : 'Hiện không có tin đăng nào cần kiểm duyệt.'}
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredListings.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50/70 transition">
+                            <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
+                              #{item.id}
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-2.5">
+                                <img src={item.images[0]} alt="" className="w-12 h-12 rounded-lg object-cover border shrink-0" />
+                                <div>
+                                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-900 border border-amber-200">
+                                    {item.category}
+                                  </span>
+                                  <h4 className="font-bold text-slate-900 text-xs mt-0.5 line-clamp-1">{item.title}</h4>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-slate-800 whitespace-nowrap">
+                              <span className="font-bold">{item.sellerName}</span>
+                              <span className="text-[10px] text-amber-600 font-bold block">★ {item.sellerRating} / 5.0</span>
+                            </td>
+                            <td className="py-3 px-3 font-black text-[#c34c36] whitespace-nowrap">
+                              {formatVND(item.priceVnd)}
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span className="font-bold text-slate-700">{formatVND(item.aiEstimatedPrice)}</span>
+                              <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-0.5">
+                                <span>Tin cậy:</span>
+                                <span className={`font-black ${item.aiConfidence < 60 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                  {item.aiConfidence}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              {item.isSuspicious ? (
+                                <div className="space-y-0.5">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-800 border border-rose-200">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    {item.duplicateMatches && item.duplicateMatches.length > 0
+                                      ? `NGHI TRÙNG (${item.duplicateMatches.length})`
+                                      : 'NGHI VẤN CAO'}
+                                  </span>
+                                  <p className="text-[10px] text-rose-700 max-w-xs line-clamp-1">{item.suspiciousReason}</p>
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                  <Clock className="w-3 h-3" />
+                                  Chờ duyệt
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <button
+                                onClick={() => setSelectedComparisonPostId(item.id)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#24263e] hover:bg-[#c34c36] text-white text-xs font-bold transition-all duration-200 cursor-pointer shadow-xs hover:shadow-md"
+                                title="Mở giao diện đối soát và kiểm định chi tiết tin đăng"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Xem Kiểm Định</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {/* ======================================================== */}
-          {/* TAB 2: DUPLICATE IMAGES & FRAUD ALERTS                    */}
-          {/* ======================================================== */}
-          {activeTab === 'duplicate-images' && (
-            <div className="space-y-5">
-              <div className="bg-white rounded-xl p-4 shadow-xs border border-slate-200 border-t-4 border-t-[#c34c36] space-y-4">
-                <div>
-                  <h3 className="font-extrabold text-sm text-slate-900 uppercase">
-                    2. KIỂM TRA HÌNH ẢNH TRÙNG LẶP & CÁC CẢNH BÁO GIAN LẬN
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Thuật toán Image Hash đối soát ảnh lấy từ Shopee/Chợ Tốt & Hệ thống phát hiện hành vi ép cọc ngoài
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {duplicateCases.map((dup) => (
-                    <div key={dup.id} className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono font-bold text-rose-900 text-xs">Mã #{dup.id} • Tin {dup.listingId}</span>
-                        <span className="px-2 py-0.5 rounded-full bg-rose-200 text-rose-900 text-[10px] font-black">
-                          {dup.similarityScore}% TRÙNG LẶP
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 text-[11px]">
-                        <div>
-                          <span className="block font-bold text-slate-700 mb-1">Ảnh người bán tải lên:</span>
-                          <img src={dup.sellerImage} alt="" className="w-full h-28 rounded-lg object-cover border" />
-                        </div>
-                        <div>
-                          <span className="block font-bold text-slate-700 mb-1">Ảnh gốc trên mạng:</span>
-                          <img src={dup.sellerImage} alt="" className="w-full h-28 rounded-lg object-cover border opacity-80" />
-                        </div>
-                      </div>
-
-                      <p className="text-slate-700 text-[11px]">
-                        <strong>Ghi chú:</strong> {dup.note}
-                      </p>
-
-                      <div className="flex justify-end gap-2 pt-2 border-t border-rose-200">
-                        <button
-                          onClick={() => triggerNotice(`Đã gửi cảnh báo bản quyền ảnh tới người bán ${dup.sellerName}`)}
-                          className="px-3 py-1.5 bg-white border border-rose-300 text-rose-800 rounded-lg text-xs font-bold hover:bg-rose-100 transition cursor-pointer"
-                        >
-                          Cảnh Báo Vi Phạm
-                        </button>
-                        <button
-                          onClick={() => triggerNotice(`Đã khóa bài tin ${dup.listingId} do đạo nhái hình ảnh`)}
-                          className="px-3 py-1.5 bg-rose-700 text-white rounded-lg text-xs font-bold hover:bg-rose-800 transition cursor-pointer"
-                        >
-                          Khóa Bài Đăng
-                        </button>
-                      </div>
+                {/* Pagination Controls */}
+                {queueTotalPages > 1 && (
+                  <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
+                    <span className="text-slate-500 font-medium">
+                      Trang {queuePage + 1} / {queueTotalPages}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => loadStaffQueue(Math.max(0, queuePage - 1))}
+                        disabled={queuePage === 0 || isLoadingQueue}
+                        className="px-3 py-1 rounded-lg border border-slate-200 text-slate-700 font-bold disabled:opacity-40 hover:bg-slate-50 transition cursor-pointer"
+                      >
+                        Trang trước
+                      </button>
+                      <button
+                        onClick={() => loadStaffQueue(Math.min(queueTotalPages - 1, queuePage + 1))}
+                        disabled={queuePage >= queueTotalPages - 1 || isLoadingQueue}
+                        className="px-3 py-1 rounded-lg border border-slate-200 text-slate-700 font-bold disabled:opacity-40 hover:bg-slate-50 transition cursor-pointer"
+                      >
+                        Trang sau
+                      </button>
                     </div>
-                  ))}
-                </div>
-
-                <div className="pt-4 border-t border-slate-200 space-y-3">
-                  <h4 className="font-black text-xs text-slate-800 uppercase tracking-wide">
-                    CẢNH BÁO HÀNH VI GIAN LẬN HỆ THỐNG (FRAUD ALERTS QUEUE)
-                  </h4>
-                  <div className="space-y-2">
-                    {fraudAlerts.map((frd) => (
-                      <div key={frd.id} className="p-3.5 rounded-xl border border-amber-200 bg-amber-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-amber-900">{frd.id}</span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-600 text-white">
-                              {frd.riskLevel === 'HIGH' ? 'RỦI RO CAO' : 'CẢNH BÁO'}
-                            </span>
-                            <span className="font-bold text-slate-800">{frd.user}</span>
-                          </div>
-                          <p className="text-slate-700">{frd.description}</p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={() => triggerNotice(`Đã đóng băng phiên chat và chuyển tài khoản ${frd.user} vào diện kiểm soát`)}
-                            className="px-3 py-1.5 bg-rose-700 text-white rounded-lg text-xs font-bold hover:bg-rose-800 transition cursor-pointer"
-                          >
-                            Chặn Giao Dịch
-                          </button>
-                        </div>
-                      </div>
-                    ))}
                   </div>
-                </div>
+                )}
               </div>
             </div>
           )}
 
           {/* ======================================================== */}
-          {/* TAB 3: PROOF OF POSSESSION (XÁC MINH SỞ HỮU)              */}
+          {/* TAB 2: PROOF OF POSSESSION (XÁC MINH SỞ HỮU)              */}
           {/* ======================================================== */}
           {activeTab === 'proof-possession' && (
             <div className="space-y-4">
               <div className="bg-white rounded-xl p-4 shadow-xs border border-slate-200 border-t-4 border-t-emerald-600 space-y-4">
                 <div>
                   <h3 className="font-extrabold text-sm text-slate-900 uppercase">
-                    3. XÁC MINH BẰNG CHỨNG SỞ HỮU (PROOF OF POSSESSION)
+                    2. XÁC MINH BẰNG CHỨNG SỞ HỮU (PROOF OF POSSESSION)
                   </h3>
                   <p className="text-xs text-slate-500">
                     Đối chiếu ảnh chụp thiết bị cùng giấy note viết tay tên/ngày giờ và tem Serial Number sản phẩm
@@ -1423,137 +1324,7 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
             </div>
           )}
 
-          {/* ======================================================== */}
-          {/* TAB 8: INSPECTIONS (ĐIỀU PHỐI & KẾT QUẢ KIỂM TRA)         */}
-          {/* ======================================================== */}
-          {activeTab === 'inspections' && (
-            <div className="space-y-4">
-              <div className="bg-white rounded-xl p-4 shadow-xs border border-slate-200 border-t-4 border-t-emerald-600 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <h3 className="font-extrabold text-sm text-slate-900 uppercase">
-                      8. ĐIỀU PHỐI QUY TRÌNH KIỂM TRA VÀ XEM KẾT QUẢ KIỂM TRA
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Sắp xếp lịch kỹ sư kiểm định tại nhà / tại Hub và tra cứu biên bản 25 tiêu chí kỹ thuật
-                    </p>
-                  </div>
 
-                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
-                    <button
-                      onClick={() => setInspectionSubTab('COORDINATE')}
-                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${inspectionSubTab === 'COORDINATE' ? 'bg-white text-[#24263e] shadow-xs font-black' : 'text-slate-600'
-                        }`}
-                    >
-                      Điều Phối Lịch ({inspectionOrders.length})
-                    </button>
-                    <button
-                      onClick={() => setInspectionSubTab('RESULTS')}
-                      className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${inspectionSubTab === 'RESULTS' ? 'bg-white text-[#24263e] shadow-xs font-black' : 'text-slate-600'
-                        }`}
-                    >
-                      Kết Quả Kiểm Tra ({inspectionResults.length})
-                    </button>
-                  </div>
-                </div>
-
-                {inspectionSubTab === 'COORDINATE' && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-600 text-[11px] font-bold">
-                          <th className="py-2.5 px-3">Mã Lịch Hẹn</th>
-                          <th className="py-2.5 px-3">Mã Đơn Hàng</th>
-                          <th className="py-2.5 px-3">Thiết Bị</th>
-                          <th className="py-2.5 px-3">Hình Thức Kiểm Tra</th>
-                          <th className="py-2.5 px-3">Trạm Hub / Kỹ Sư Phụ Trách</th>
-                          <th className="py-2.5 px-3">Thời Gian Hẹn</th>
-                          <th className="py-2.5 px-3 text-center">Thao Tác</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {inspectionOrders.map((ord) => (
-                          <tr key={ord.id} className="hover:bg-slate-50/70 transition">
-                            <td className="py-3 px-3 font-mono font-bold text-slate-900">{ord.id}</td>
-                            <td className="py-3 px-3 font-mono text-slate-600">{ord.orderId}</td>
-                            <td className="py-3 px-3 font-bold text-slate-900">{ord.productName}</td>
-                            <td className="py-3 px-3">
-                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 font-bold text-[10px]">
-                                {ord.method === 'AT_HOME' ? 'Kỹ Sư Đến Tận Nhà' : 'Gửi Về Trạm Hub'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-slate-700">
-                              <span className="font-bold block">{ord.hubCenter}</span>
-                              <span className="text-[11px] text-slate-500">{ord.technician}</span>
-                            </td>
-                            <td className="py-3 px-3 font-mono text-slate-700">{ord.appointmentDate}</td>
-                            <td className="py-3 px-3 text-center">
-                              <button
-                                onClick={() => triggerNotice(`Đã xác nhận điều phối kỹ sư cho lịch hẹn ${ord.id}`)}
-                                className="px-2.5 py-1 rounded bg-[#24263e] hover:bg-emerald-700 text-white text-[11px] font-bold transition cursor-pointer"
-                              >
-                                Cập Nhật Lịch
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {inspectionSubTab === 'RESULTS' && (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-100 bg-slate-50/70 text-slate-600 text-[11px] font-bold">
-                          <th className="py-2.5 px-3">Mã Biên Bản</th>
-                          <th className="py-2.5 px-3">Sản Phẩm</th>
-                          <th className="py-2.5 px-3">Kỹ Sư Kiểm Định</th>
-                          <th className="py-2.5 px-3">Điểm Số (25 Tiêu Chí)</th>
-                          <th className="py-2.5 px-3">Kết Luận & Mã NFC</th>
-                          <th className="py-2.5 px-3">Ngày Lập</th>
-                          <th className="py-2.5 px-3 text-center">Xem Chi Tiết</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {inspectionResults.map((rpt) => (
-                          <tr key={rpt.id} className="hover:bg-slate-50/70 transition">
-                            <td className="py-3 px-3 font-mono font-bold text-slate-900">{rpt.id}</td>
-                            <td className="py-3 px-3 font-bold text-slate-900">{rpt.productName}</td>
-                            <td className="py-3 px-3 text-slate-700">{rpt.technician}</td>
-                            <td className="py-3 px-3 font-black text-slate-900">{rpt.score}</td>
-                            <td className="py-3 px-3">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-black ${rpt.verdict === 'PASS'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-rose-100 text-rose-800'
-                                  }`}
-                              >
-                                {rpt.verdict === 'PASS' ? 'ĐẠT (PASS)' : 'KHÔNG ĐẠT (FAIL)'}
-                              </span>
-                              <span className="block font-mono text-[10px] text-slate-500 mt-0.5">
-                                {rpt.nfcTamperSealId}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 font-mono text-slate-600">{rpt.date}</td>
-                            <td className="py-3 px-3 text-center">
-                              <button
-                                onClick={() => setSelectedInspectionModal(rpt)}
-                                className="px-2.5 py-1 rounded bg-slate-100 hover:bg-[#24263e] hover:text-white text-slate-800 text-[11px] font-bold transition cursor-pointer"
-                              >
-                                Xem Biên Bản
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* ======================================================== */}
           {/* TAB 9: MONITOR TRANSACTIONS (GIÁM SÁT GIAO DỊCH)          */}
@@ -1987,59 +1758,21 @@ export const StaffWorkspaceView: React.FC<StaffWorkspaceViewProps> = ({
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* MODAL: XEM BIÊN BẢN KIỂM ĐỊNH HUB                        */}
-      {/* ======================================================== */}
-      {selectedInspectionModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-xs">
-            <div className="flex items-center justify-between border-b pb-3">
-              <div>
-                <h3 className="font-black text-sm text-slate-900">
-                  BIÊN BẢN KIỂM ĐỊNH #{selectedInspectionModal.id}
-                </h3>
-                <p className="text-slate-500 text-[11px]">{selectedInspectionModal.productName}</p>
-              </div>
-              <button
-                onClick={() => setSelectedInspectionModal(null)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-bold">Kỹ sư kiểm tra:</span>
-                <span className="font-bold text-slate-900">{selectedInspectionModal.technician}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-bold">Điểm số 25 tiêu chí:</span>
-                <span className="font-black text-slate-900 text-sm">{selectedInspectionModal.score}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-bold">Mã tem niêm phong NFC:</span>
-                <span className="font-mono font-bold text-indigo-900">{selectedInspectionModal.nfcTamperSealId}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500 font-bold">Tình trạng linh kiện:</span>
-                <span className="font-medium text-slate-800 text-right max-w-xs">{selectedInspectionModal.componentsStatus}</span>
-              </div>
-            </div>
 
-            <div className="flex justify-end pt-2 border-t">
-              <button
-                onClick={() => setSelectedInspectionModal(null)}
-                className="px-4 py-2 bg-[#24263e] hover:bg-[#c34c36] text-white rounded-xl font-bold transition cursor-pointer"
-              >
-                Đóng
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* ======================================================== */}
+      {/* 2-COLUMN COMPARISON MODAL FOR STAFF LISTING REVIEW        */}
+      {/* ======================================================== */}
+      {selectedComparisonPostId && (
+        <ListingComparisonModal
+          postId={selectedComparisonPostId}
+          onClose={() => setSelectedComparisonPostId(null)}
+          onActionSuccess={(msg) => {
+            triggerNotice(msg);
+            loadStaffQueue(queuePage);
+          }}
+        />
       )}
-
-
     </div>
   );
 };
